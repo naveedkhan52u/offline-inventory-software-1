@@ -114,7 +114,7 @@ function Auth({ mode, setMode, onSuccess }) {
           <label>Owner name<input value={form.ownerName} onChange={e=>update('ownerName',e.target.value)} placeholder="Full name" /></label>
           <label>Phone number<input value={form.phone} onChange={e=>update('phone',e.target.value)} placeholder="Optional" /></label>
           <label>Business address<input value={form.address} onChange={e=>update('address',e.target.value)} placeholder="Optional" /></label>
-          <label>Currency<select value={form.currency} onChange={e=>update('currency',e.target.value)}><option value="PKR">PKR - Pakistani Rupee</option><option value="USD">USD - US Dollar</option><option value="EUR">EUR - Euro</option><option value="GBP">GBP - Pound Sterling</option></select></label>
+          <label>Currency<select className="currency-select" value={form.currency} onChange={e=>update('currency',e.target.value)}><option value="PKR">PKR - Pakistani Rupee</option><option value="USD">USD - US Dollar</option><option value="EUR">EUR - Euro</option><option value="GBP">GBP - Pound Sterling</option></select></label>
         </>}
         <label>Username<input value={form.username} onChange={e=>update('username',e.target.value)} placeholder="Choose a username" autoFocus={mode==='login'} /></label>
         <label>Password<div className="password-field"><input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e=>update('password',e.target.value)} placeholder={mode==='create' ? 'At least 8 characters' : 'Enter your password'} /><button type="button" className="password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? '◉' : '◌'}</button></div></label>
