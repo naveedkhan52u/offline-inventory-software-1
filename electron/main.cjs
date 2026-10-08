@@ -40,6 +40,20 @@ function createDatabase() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT '',
+      sku TEXT NOT NULL DEFAULT '',
+      barcode TEXT NOT NULL DEFAULT '',
+      buying_price REAL NOT NULL DEFAULT 0,
+      selling_price REAL NOT NULL DEFAULT 0,
+      stock_quantity INTEGER NOT NULL DEFAULT 0,
+      low_stock_threshold INTEGER NOT NULL DEFAULT 5,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -177,6 +191,51 @@ app.whenReady().then(() => {
     return { ok: true, username: user.username, businessName: business?.business_name || '' };
   });
   
+  ipcMain.handle('products:list', () => ({
+    ok: true,
+    products: db.prepare('SELECT * FROM products ORDER BY name COLLATE NOCASE ASC, id DESC').all()
+  }));
+
+  ipcMain.handle('products:create', (_event, data) => {
+    try {
+      const name = data?.name?.trim();
+      if (!name) return { ok: false, error: 'Product name is required.' };
+      const values = [
+        name, data.category?.trim() || '', data.sku?.trim() || '', data.barcode?.trim() || '',
+        Number(data.buyingPrice) || 0, Number(data.sellingPrice) || 0,
+        Math.max(0, Math.floor(Number(data.stock) || 0)), Math.max(0, Math.floor(Number(data.lowStock) || 0))
+      ];
+      const result = db.prepare('INSERT INTO products (name, category, sku, barcode, buying_price, selling_price, stock_quantity, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(...values);
+      return { ok: true, id: result.lastInsertRowid };
+    } catch (error) {
+      return { ok: false, error: 'Unable to add product.' };
+    }
+  });
+
+  ipcMain.handle('products:update', (_event, id, data) => {
+    try {
+      const name = data?.name?.trim();
+      if (!name) return { ok: false, error: 'Product name is required.' };
+      const result = db.prepare('UPDATE products SET name=?, category=?, sku=?, barcode=?, buying_price=?, selling_price=?, stock_quantity=?, low_stock_threshold=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(
+        name, data.category?.trim() || '', data.sku?.trim() || '', data.barcode?.trim() || '',
+        Number(data.buyingPrice) || 0, Number(data.sellingPrice) || 0,
+        Math.max(0, Math.floor(Number(data.stock) || 0)), Math.max(0, Math.floor(Number(data.lowStock) || 0)), id
+      );
+      return result.changes ? { ok: true } : { ok: false, error: 'Product not found.' };
+    } catch (error) {
+      return { ok: false, error: 'Unable to update product.' };
+    }
+  });
+
+  ipcMain.handle('products:delete', (_event, id) => {
+    try {
+      const result = db.prepare('DELETE FROM products WHERE id=?').run(id);
+      return result.changes ? { ok: true } : { ok: false, error: 'Product not found.' };
+    } catch (error) {
+      return { ok: false, error: 'Unable to delete product.' };
+    }
+  });
+
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
