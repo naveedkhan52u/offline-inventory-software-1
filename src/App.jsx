@@ -1,11 +1,5 @@
 import React, { useEffect, useState } from 'react';
 
-const hashPassword = async (value) => {
-  const data = new TextEncoder().encode(value);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-};
-
 function Logo() {
   return <div className="brand"><span className="brand-mark">S</span><span>StockDesk</span></div>;
 }
@@ -66,42 +60,64 @@ function Home({ onLogin, onCreate }) {
 }
 
 function Auth({ mode, setMode, onSuccess }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [business, setBusiness] = useState('');
+  const [form, setForm] = useState({ businessName:'', ownerName:'', phone:'', address:'', currency:'PKR', username:'', password:'' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+
   const submit = async (e) => {
-    e.preventDefault(); setError('');
-    if (!username.trim() || !password) return setError('Username and password are required.');
-    if (mode === 'create' && !business.trim()) return setError('Business name is required.');
-    if (password.length < 6) return setError('Password must be at least 6 characters.');
-    setBusy(true);
-    const passwordHash = await hashPassword(password);
+    e.preventDefault();
+    setError('');
+    if (!form.username.trim() || !form.password) return setError('Username and password are required.');
     if (mode === 'create') {
-      const result = await window.inventoryAPI.createAccount({ username: username.trim(), passwordHash });
-      if (!result.ok) setError(result.error);
-      else onSuccess(username.trim(), business.trim());
-    } else {
-      const result = await window.inventoryAPI.login({ username: username.trim(), passwordHash });
-      if (!result.ok) setError('Incorrect username or password.');
-      else onSuccess(result.username);
+      if (!form.businessName.trim()) return setError('Business name is required.');
+      if (!form.ownerName.trim()) return setError('Owner name is required.');
+      if (form.password.length < 8) return setError('Password must be at least 8 characters.');
     }
-    setBusy(false);
+    setBusy(true);
+    try {
+      if (mode === 'create') {
+        const result = await window.inventoryAPI.createAccount({
+          businessName: form.businessName.trim(),
+          ownerName: form.ownerName.trim(),
+          phone: form.phone.trim(),
+          address: form.address.trim(),
+          currency: form.currency,
+          username: form.username.trim(),
+          password: form.password
+        });
+        if (!result.ok) setError(result.error);
+        else onSuccess(result.username, result.businessName);
+      } else {
+        const result = await window.inventoryAPI.login({ username: form.username.trim(), password: form.password });
+        if (!result.ok) setError('Incorrect username or password.');
+        else onSuccess(result.username, result.businessName);
+      }
+    } catch {
+      setError('Unable to connect to the local database.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return <div className="auth-page">
     <div className="auth-brand"><Logo /></div>
     <div className="auth-shell">
-      <div className="auth-side"><div className="eyebrow">STOCKDESK</div><h1>{mode === 'create' ? 'Set up your workspace.' : 'Welcome back.'}</h1><p>{mode === 'create' ? 'Create the local admin account for this shop. Your inventory stays on this computer.' : 'Sign in to your local inventory dashboard.'}</p><div className="offline-badge">● Offline-first · SQLite storage</div></div>
+      <div className="auth-side"><div className="eyebrow">STOCKDESK</div><h1>{mode === 'create' ? 'Set up your workspace.' : 'Welcome back.'}</h1><p>{mode === 'create' ? 'Create the local administrator account and save your business information on this computer.' : 'Sign in to your local inventory dashboard.'}</p><div className="offline-badge">● Offline-first · SQLite storage</div></div>
       <form className="auth-card" onSubmit={submit}>
         <h2>{mode === 'create' ? 'Create account' : 'Sign in'}</h2>
-        <p className="muted">{mode === 'create' ? 'This account will be the local administrator.' : 'Enter your local account credentials.'}</p>
-        {mode === 'create' && <label>Business name<input value={business} onChange={e=>setBusiness(e.target.value)} placeholder="e.g. Khan General Store" /></label>}
-        <label>Username<input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Choose a username" autoFocus /></label>
-        <label>Password<div className="password-field"><input type={showPassword ? 'text' : 'password'} value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters" /><button type="button" className="password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? '◉' : '◌'}</button></div></label>
+        <p className="muted">{mode === 'create' ? 'Your business information and login are stored locally.' : 'Enter your local account credentials.'}</p>
+        {mode === 'create' && <>
+          <label>Business name<input value={form.businessName} onChange={e=>update('businessName',e.target.value)} placeholder="e.g. Khan General Store" autoFocus /></label>
+          <label>Owner name<input value={form.ownerName} onChange={e=>update('ownerName',e.target.value)} placeholder="Full name" /></label>
+          <label>Phone number<input value={form.phone} onChange={e=>update('phone',e.target.value)} placeholder="Optional" /></label>
+          <label>Business address<input value={form.address} onChange={e=>update('address',e.target.value)} placeholder="Optional" /></label>
+          <label>Currency<select value={form.currency} onChange={e=>update('currency',e.target.value)}><option value="PKR">PKR - Pakistani Rupee</option><option value="USD">USD - US Dollar</option><option value="EUR">EUR - Euro</option><option value="GBP">GBP - Pound Sterling</option></select></label>
+        </>}
+        <label>Username<input value={form.username} onChange={e=>update('username',e.target.value)} placeholder="Choose a username" autoFocus={mode==='login'} /></label>
+        <label>Password<div className="password-field"><input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e=>update('password',e.target.value)} placeholder={mode==='create' ? 'At least 8 characters' : 'Enter your password'} /><button type="button" className="password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? '◉' : '◌'}</button></div></label>
         {error && <div className="form-error">{error}</div>}
         <button className="btn primary full" disabled={busy}>{busy ? 'Please wait…' : mode === 'create' ? 'Create Account' : 'Sign In'}</button>
         <button type="button" className="back-link" onClick={()=>setMode(mode === 'create' ? 'login' : 'home')}>← Back</button>
@@ -110,15 +126,25 @@ function Auth({ mode, setMode, onSuccess }) {
   </div>;
 }
 
-function Dashboard({ username, onLogout }) {
+const NAV = [
+  ['Overview','⌂'], ['Products','▦'], ['Stock','↕'], ['Purchases','＋'], ['Sales','₨'],
+  ['Profit & Loss','◒'], ['Staff','♙'], ['Dashboard Analytics','◫'], ['Reports','▤'],
+  ['Backup & Restore','↥'], ['Barcode/QR','▥'], ['Installation','⌘']
+];
+
+function Dashboard({ username, businessName, onLogout }) {
   const [active, setActive] = useState('Overview');
-  const nav = [['Overview','⌂'],['Products','▦'],['Stock','↕'],['Sales','₨'],['Purchases','＋'],['Suppliers','◇'],['Staff','♙'],['Profit & Loss','◒'],['Reports','▤']];
 
   return <div className="dashboard">
-    <aside className="sidebar"><Logo /><div className="nav-label">MAIN MENU</div>{nav.map(([name,icon])=><button className={active===name?'nav-item active':'nav-item'} key={name} onClick={()=>setActive(name)}><span>{icon}</span>{name}</button>)}<div className="sidebar-bottom"><button className="nav-item"><span>⚙</span>Settings</button><button className="nav-item logout" onClick={onLogout}><span>↪</span>Sign out</button></div></aside>
+    <aside className="sidebar">
+      <Logo />
+      <div className="nav-label">MAIN MENU</div>
+      {NAV.map(([name,icon])=><button className={active===name?'nav-item active':'nav-item'} key={name} onClick={()=>setActive(name)}><span>{icon}</span>{name}</button>)}
+      <div className="sidebar-bottom"><button className="nav-item"><span>⚙</span>Settings</button><button className="nav-item logout" onClick={onLogout}><span>↪</span>Sign out</button></div>
+    </aside>
     <main className="dash-main">
-      <header className="dash-header"><div><div className="eyebrow">OVERVIEW</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? 'Here is what is happening with your business today.' : 'This section is ready for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Overview' ? <><section className="stat-grid"><Stat label="Total Products" value="0" note="Add your first product" icon="▦"/><Stat label="Stock Value" value="₨ 0" note="Current inventory value" icon="◈"/><Stat label="Today Sales" value="₨ 0" note="No sales recorded" icon="↗"/><Stat label="Low Stock" value="0" note="Everything looks clear" icon="!" /></section><section className="dash-grid"><div className="panel large-panel"><div className="panel-head"><div><h2>Sales overview</h2><p>Weekly sales performance</p></div><span className="period">This week ▾</span></div><div className="empty-chart"><div className="chart-line"></div><span>No sales data yet</span></div></div><div className="panel"><div className="panel-head"><div><h2>Quick actions</h2><p>Common tasks</p></div></div><div className="quick-list"><button>＋ Add product <span>→</span></button><button>＋ Record purchase <span>→</span></button><button>↗ Create sale <span>→</span></button><button>▤ View reports <span>→</span></button></div></div></section></> : <div className="panel section-placeholder"><div className="placeholder-icon">⌁</div><h2>{active}</h2><p>The interface is prepared. We will connect this module to the local SQLite database next.</p></div>}
+      <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'OVERVIEW' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? businessName || 'Your business' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
+      {active === 'Overview' ? <><section className="stat-grid"><Stat label="Total Products" value="0" note="Products module coming next" icon="▦"/><Stat label="Stock Value" value="₨ 0" note="Stock module coming next" icon="◈"/><Stat label="Today Sales" value="₨ 0" note="Sales module coming next" icon="↗"/><Stat label="Low Stock" value="0" note="Stock alerts coming next" icon="!"/></section><section className="dash-grid"><div className="panel large-panel"><div className="panel-head"><div><h2>Sales overview</h2><p>Analytics will use real local data later.</p></div><span className="period">Coming later</span></div><div className="empty-chart"><div className="chart-line"></div><span>No business transactions recorded yet</span></div></div><div className="panel"><div className="panel-head"><div><h2>Module roadmap</h2><p>Development order</p></div></div><div className="quick-list">{NAV.slice(1).map(([name])=><button key={name} onClick={()=>setActive(name)}>{name}<span>→</span></button>)}</div></div></section></> : <div className="panel section-placeholder"><div className="placeholder-icon">⌁</div><h2>{active}</h2><p>The navigation section is in place. Its database tables and features will be implemented separately.</p></div>}
     </main>
   </div>;
 }
@@ -129,14 +155,16 @@ export default function App() {
   const [screen, setScreen] = useState('home');
   const [authMode, setAuthMode] = useState('login');
   const [username, setUsername] = useState('');
-  const [hasUser, setHasUser] = useState(false);
+  const [businessName, setBusinessName] = useState('');
 
-  useEffect(() => { window.inventoryAPI?.authStatus().then(r=>setHasUser(r.hasUser)); }, []);
+  useEffect(() => {
+    window.inventoryAPI?.authStatus().catch(() => null);
+  }, []);
 
   const showAuth = (mode) => { setAuthMode(mode); setScreen('auth'); };
-  const success = (name) => { setUsername(name); setHasUser(true); setScreen('dashboard'); };
+  const success = (name, business) => { setUsername(name); setBusinessName(business || ''); setScreen('dashboard'); };
 
-  if (screen === 'dashboard') return <Dashboard username={username} onLogout={()=>setScreen('home')} />;
+  if (screen === 'dashboard') return <Dashboard username={username} businessName={businessName} onLogout={()=>{setUsername('');setBusinessName('');setScreen('home');}} />;
   if (screen === 'auth') return <Auth mode={authMode} setMode={(m)=>m==='home'?setScreen('home'):setAuthMode(m)} onSuccess={success} />;
   return <Home onLogin={()=>showAuth('login')} onCreate={()=>showAuth('create')} />;
 }
