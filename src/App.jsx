@@ -76,27 +76,36 @@ function Auth({ mode, setMode, onSuccess }) {
       if (!form.ownerName.trim()) return setError('Owner name is required.');
       if (form.password.length < 8) return setError('Password must be at least 8 characters.');
     }
+
+    if (!window.inventoryAPI) {
+      setError('This page is not running inside the StockDesk desktop app. Open the Electron application to use the local database.');
+      return;
+    }
+
     setBusy(true);
     try {
-      if (mode === 'create') {
-        const result = await window.inventoryAPI.createAccount({
-          businessName: form.businessName.trim(),
-          ownerName: form.ownerName.trim(),
-          phone: form.phone.trim(),
-          address: form.address.trim(),
-          currency: form.currency,
-          username: form.username.trim(),
-          password: form.password
-        });
-        if (!result.ok) setError(result.error);
-        else onSuccess(result.username, result.businessName);
+      const result = mode === 'create'
+        ? await window.inventoryAPI.createAccount({
+            businessName: form.businessName.trim(),
+            ownerName: form.ownerName.trim(),
+            phone: form.phone.trim(),
+            address: form.address.trim(),
+            currency: form.currency,
+            username: form.username.trim(),
+            password: form.password
+          })
+        : await window.inventoryAPI.login({ username: form.username.trim(), password: form.password });
+
+      if (!result?.ok) {
+        setError(mode === 'create'
+          ? (result?.error || 'Unable to create the local account.')
+          : 'Incorrect username or password.');
       } else {
-        const result = await window.inventoryAPI.login({ username: form.username.trim(), password: form.password });
-        if (!result.ok) setError('Incorrect username or password.');
-        else onSuccess(result.username, result.businessName);
+        onSuccess(result.username, result.businessName);
       }
-    } catch {
-      setError('Unable to connect to the local database.');
+    } catch (error) {
+      console.error('Local database error:', error);
+      setError('The local database could not be reached. Please restart the StockDesk desktop app and try again.');
     } finally {
       setBusy(false);
     }
@@ -158,7 +167,7 @@ export default function App() {
   const [businessName, setBusinessName] = useState('');
 
   useEffect(() => {
-    window.inventoryAPI?.authStatus().catch(() => null);
+    if (window.inventoryAPI) window.inventoryAPI.authStatus().catch(() => null);
   }, []);
 
   const showAuth = (mode) => { setAuthMode(mode); setScreen('auth'); };
