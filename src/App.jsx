@@ -23,8 +23,8 @@ function Home({ onLogin, onCreate }) {
       <main className="hero">
         <div className="hero-copy">
           <div className="eyebrow">OFFLINE INVENTORY MANAGEMENT</div>
-          <h1>Run your inventory.<br /><span>Keep your data yours.</span></h1>
-          <p>A clean desktop system for products, stock, sales, purchases and business reports. Everything works locally, without an internet connection.</p>
+          <h1>Know your numbers.<br /><span>Grow your business.</span></h1>
+          <p>StockDesk gives shop owners a clear view of products, stock, sales, expenses, profit and loss. Your business data stays on your computer and works without the internet.</p>
           <div className="hero-actions">
             <button className="btn primary large" onClick={onCreate}>Create your account <span>→</span></button>
             <button className="text-btn" onClick={onLogin}>Already have an account? Sign in</button>
@@ -43,11 +43,24 @@ function Home({ onLogin, onCreate }) {
           </div>
         </div>
       </main>
-      <section className="features">
-        <div><span>01</span><h3>Products & Stock</h3><p>Track quantities, buying prices, selling prices and low-stock items.</p></div>
-        <div><span>02</span><h3>Sales & Purchases</h3><p>Record transactions and keep your inventory calculations consistent.</p></div>
-        <div><span>03</span><h3>Profit & Reports</h3><p>See daily, weekly and monthly business performance in one place.</p></div>
+      <section className="benefits">
+        <div className="section-intro"><div className="eyebrow">BUILT FOR BETTER DECISIONS</div><h2>Turn daily transactions into business insight.</h2><p>Recording sales is useful. Understanding what those sales mean is where things get interesting.</p></div>
+        <div className="benefit-grid">
+          <div className="benefit"><span className="benefit-number">01</span><div className="benefit-icon">↗</div><h3>Track sales clearly</h3><p>See daily, weekly and monthly sales so you know when your business is performing well.</p></div>
+          <div className="benefit"><span className="benefit-number">02</span><div className="benefit-icon">◒</div><h3>Understand profit & loss</h3><p>Compare buying costs with selling prices and monitor real profitability.</p></div>
+          <div className="benefit"><span className="benefit-number">03</span><div className="benefit-icon">▥</div><h3>Watch your inventory</h3><p>Know what you have, what is running low and how much money is tied up in stock.</p></div>
+          <div className="benefit"><span className="benefit-number">04</span><div className="benefit-icon">⌁</div><h3>Make smarter decisions</h3><p>Use trends and reports to identify strong products, slow-moving stock and better margins.</p></div>
+        </div>
       </section>
+      <section className="analytics-section">
+        <div className="analytics-copy"><div className="eyebrow">BUSINESS ANALYTICS</div><h2>See the direction of your business, not just today's sales.</h2><p>StockDesk turns recorded transactions into easy-to-read charts and summaries. Follow sales trends, compare profit performance and understand where your money is going.</p>
+          <div className="analytics-points"><div><b>Sales trends</b><span>Compare performance across days, weeks and months.</span></div><div><b>Profit monitoring</b><span>See whether revenue is actually becoming profit.</span></div><div><b>Inventory value</b><span>Understand how much capital is sitting in stock.</span></div></div>
+        </div>
+        <div className="analytics-card"><div className="analytics-head"><div><b>Sales & profit</b><small>Illustrative dashboard preview</small></div><span>This year ▾</span></div><div className="analytics-bars">{[42,58,51,69,63,78,88,74,94,82,97,91].map((h,i)=><div className="bar-wrap" key={i}><div className="bar" style={{height:h+'%'}}></div><small>{['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</small></div>)}</div><div className="analytics-legend"><span><i></i>Sales</span><span><i></i>Profit</span></div></div>
+      </section>
+      <section className="workflow"><div className="eyebrow">ONE SIMPLE WORKFLOW</div><h2>From transaction to insight.</h2><div className="workflow-grid"><div><strong>01</strong><h3>Record</h3><p>Add products, purchases and sales as your business operates.</p></div><div><strong>02</strong><h3>Monitor</h3><p>Keep an eye on stock, costs, revenue and activity.</p></div><div><strong>03</strong><h3>Analyze</h3><p>Use reports and charts to understand performance.</p></div><div><strong>04</strong><h3>Grow</h3><p>Use real numbers to improve pricing, stock and margins.</p></div></div></section>
+      <section className="cta"><div><div className="eyebrow">READY WHEN YOU ARE</div><h2>Start with a cleaner way to manage your business.</h2><p>No cloud subscription. No internet dependency. Just your business data, stored locally.</p></div><button className="btn light large" onClick={onCreate}>Create your account →</button></section>
+      <footer><Logo /><span>Offline inventory management for growing businesses.</span></footer>
     </div>
   );
 }
@@ -58,6 +71,7 @@ function Auth({ mode, setMode, onSuccess }) {
   const [business, setBusiness] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault(); setError('');
@@ -87,7 +101,7 @@ function Auth({ mode, setMode, onSuccess }) {
         <p className="muted">{mode === 'create' ? 'This account will be the local administrator.' : 'Enter your local account credentials.'}</p>
         {mode === 'create' && <label>Business name<input value={business} onChange={e=>setBusiness(e.target.value)} placeholder="e.g. Khan General Store" /></label>}
         <label>Username<input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Choose a username" autoFocus /></label>
-        <label>Password<input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters" /></label>
+        <label>Password<div className="password-field"><input type={showPassword ? 'text' : 'password'} value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters" /><button type="button" className="password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? '◉' : '◌'}</button></div></label>
         {error && <div className="form-error">{error}</div>}
         <button className="btn primary full" disabled={busy}>{busy ? 'Please wait…' : mode === 'create' ? 'Create Account' : 'Sign In'}</button>
         <button type="button" className="back-link" onClick={()=>setMode(mode === 'create' ? 'login' : 'home')}>← Back</button>
