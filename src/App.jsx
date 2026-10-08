@@ -141,8 +141,120 @@ const NAV = [
   ['Backup & Restore','↥'], ['Barcode/QR','▥'], ['Installation','⌘']
 ];
 
+function Products({ currency = 'PKR' }) {
+  const emptyForm = { name:'', category:'', sku:'', barcode:'', buyingPrice:'', sellingPrice:'', stock:'', lowStock:'5' };
+  const [products, setProducts] = useState([]);
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('All');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const result = await window.inventoryAPI.listProducts();
+      if (result?.ok) setProducts(result.products || []);
+      else setError(result?.error || 'Unable to load products.');
+    } catch (e) { setError('Unable to load products from the local database.'); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const reset = () => { setForm(emptyForm); setEditingId(null); setShowForm(false); };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(''); setMessage('');
+    if (!form.name.trim()) return setError('Product name is required.');
+    const buyingPrice = Number(form.buyingPrice);
+    const sellingPrice = Number(form.sellingPrice);
+    const stock = Number(form.stock);
+    const lowStock = Number(form.lowStock);
+    if (![buyingPrice, sellingPrice, stock, lowStock].every(Number.isFinite) || buyingPrice < 0 || sellingPrice < 0 || stock < 0 || lowStock < 0) {
+      return setError('Prices, stock and low-stock level must be valid non-negative numbers.');
+    }
+    setBusy(true);
+    try {
+      const payload = { ...form, name:form.name.trim(), category:form.category.trim(), sku:form.sku.trim(), barcode:form.barcode.trim(), buyingPrice, sellingPrice, stock, lowStock };
+      const result = editingId
+        ? await window.inventoryAPI.updateProduct(editingId, payload)
+        : await window.inventoryAPI.createProduct(payload);
+      if (!result?.ok) setError(result?.error || 'Unable to save product.');
+      else { setMessage(editingId ? 'Product updated successfully.' : 'Product added successfully.'); reset(); await load(); }
+    } catch (e) { setError('The local database could not save this product.'); }
+    finally { setBusy(false); }
+  };
+
+  const edit = (p) => {
+    setEditingId(p.id);
+    setForm({ name:p.name || '', category:p.category || '', sku:p.sku || '', barcode:p.barcode || '', buyingPrice:String(p.buying_price ?? ''), sellingPrice:String(p.selling_price ?? ''), stock:String(p.stock_quantity ?? ''), lowStock:String(p.low_stock_threshold ?? '5') });
+    setShowForm(true); setMessage(''); setError('');
+  };
+
+  const remove = async (p) => {
+    if (!window.confirm('Delete this product? This cannot be undone.')) return;
+    setError(''); setMessage('');
+    try {
+      const result = await window.inventoryAPI.deleteProduct(p.id);
+      if (!result?.ok) setError(result?.error || 'Unable to delete product.');
+      else { setMessage('Product deleted successfully.'); await load(); }
+    } catch (e) { setError('The local database could not delete this product.'); }
+  };
+
+  const categories = ['All', ...Array.from(new Set(products.map(p => p.category).filter(Boolean))).sort()];
+  const filtered = products.filter(p => {
+    const q = search.trim().toLowerCase();
+    const matchesSearch = !q || [p.name,p.category,p.sku,p.barcode].some(v => String(v || '').toLowerCase().includes(q));
+    return matchesSearch && (category === 'All' || p.category === category);
+  });
+  const money = (v) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(v || 0));
+  const totalStockValue = products.reduce((sum,p) => sum + Number(p.buying_price || 0) * Number(p.stock_quantity || 0), 0);
+  const lowStockCount = products.filter(p => Number(p.stock_quantity) <= Number(p.low_stock_threshold)).length;
+
+  return <div className="products-page">
+    <div className="products-summary">
+      <div><span>Total products</span><strong>{products.length}</strong></div>
+      <div><span>Stock value</span><strong>{currency} {money(totalStockValue)}</strong></div>
+      <div><span>Low stock</span><strong>{lowStockCount}</strong></div>
+      <div><span>Showing</span><strong>{filtered.length}</strong></div>
+    </div>
+    <div className="products-toolbar">
+      <div className="product-search"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, SKU or barcode..." /></div>
+      <select value={category} onChange={e=>setCategory(e.target.value)}>{categories.map(c=><option key={c}>{c}</option>)}</select>
+      <button className="btn primary" onClick={()=>{setEditingId(null);setForm(emptyForm);setShowForm(true);setError('');setMessage('');}}>+ Add Product</button>
+    </div>
+    {message && <div className="product-message">{message}</div>}
+    {error && <div className="form-error product-error">{error}</div>}
+    {showForm && <form className="panel product-form" onSubmit={submit}>
+      <div className="panel-head"><div><h2>{editingId ? 'Edit product' : 'Add product'}</h2><p>Product information is stored locally in SQLite.</p></div><button type="button" className="icon-close" onClick={reset}>×</button></div>
+      <div className="product-fields">
+        <label>Product name *<input value={form.name} onChange={e=>update('name',e.target.value)} placeholder="e.g. Coca Cola 1.5L" autoFocus /></label>
+        <label>Category<input value={form.category} onChange={e=>update('category',e.target.value)} placeholder="e.g. Beverages" /></label>
+        <label>SKU<input value={form.sku} onChange={e=>update('sku',e.target.value)} placeholder="e.g. COKE-15" /></label>
+        <label>Barcode / QR value<input value={form.barcode} onChange={e=>update('barcode',e.target.value)} placeholder="Enter or scan later" /></label>
+        <label>Buying price<input type="number" min="0" step="0.01" value={form.buyingPrice} onChange={e=>update('buyingPrice',e.target.value)} placeholder="0.00" /></label>
+        <label>Selling price<input type="number" min="0" step="0.01" value={form.sellingPrice} onChange={e=>update('sellingPrice',e.target.value)} placeholder="0.00" /></label>
+        <label>Current stock<input type="number" min="0" step="1" value={form.stock} onChange={e=>update('stock',e.target.value)} placeholder="0" /></label>
+        <label>Low-stock alert at<input type="number" min="0" step="1" value={form.lowStock} onChange={e=>update('lowStock',e.target.value)} placeholder="5" /></label>
+      </div>
+      <div className="product-form-actions"><button type="button" className="btn ghost" onClick={reset}>Cancel</button><button className="btn primary" disabled={busy}>{busy ? 'Saving…' : editingId ? 'Save Changes' : 'Add Product'}</button></div>
+    </form>}
+    <div className="panel product-table-panel">
+      <div className="panel-head"><div><h2>Products</h2><p>{filtered.length} product{filtered.length===1?'':'s'} found</p></div></div>
+      {filtered.length ? <div className="table-wrap"><table className="product-table"><thead><tr><th>Product</th><th>Category</th><th>SKU / Barcode</th><th>Buying</th><th>Selling</th><th>Stock</th><th>Unit profit</th><th>Status</th><th></th></tr></thead><tbody>
+        {filtered.map(p => { const profit=Number(p.selling_price||0)-Number(p.buying_price||0); const low=Number(p.stock_quantity||0)<=Number(p.low_stock_threshold||0); return <tr key={p.id}><td><strong>{p.name}</strong></td><td>{p.category || '—'}</td><td><small>{p.sku || p.barcode || '—'}</small></td><td>{currency} {money(p.buying_price)}</td><td>{currency} {money(p.selling_price)}</td><td><b>{p.stock_quantity}</b></td><td>{currency} {money(profit)}</td><td><span className={low?'stock-badge low':'stock-badge ok'}>{low?'Low stock':'In stock'}</span></td><td><div className="row-actions"><button onClick={()=>edit(p)}>Edit</button><button className="danger" onClick={()=>remove(p)}>Delete</button></div></td></tr> })}
+      </tbody></table></div> : <div className="products-empty"><div>▦</div><h3>{products.length ? 'No matching products' : 'No products yet'}</h3><p>{products.length ? 'Try another search or category.' : 'Add your first product to start building your inventory.'}</p>{!products.length && <button className="btn primary" onClick={()=>setShowForm(true)}>Add your first product</button>}</div>}
+    </div>
+  </div>;
+}
+
 function Dashboard({ username, businessName, onLogout }) {
   const [active, setActive] = useState('Overview');
+  const currency = 'PKR';
 
   return <div className="dashboard">
     <aside className="sidebar">
@@ -153,7 +265,7 @@ function Dashboard({ username, businessName, onLogout }) {
     </aside>
     <main className="dash-main">
       <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'OVERVIEW' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? businessName || 'Your business' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Overview' ? <><section className="stat-grid"><Stat label="Total Products" value="0" note="Products module coming next" icon="▦"/><Stat label="Stock Value" value="₨ 0" note="Stock module coming next" icon="◈"/><Stat label="Today Sales" value="₨ 0" note="Sales module coming next" icon="↗"/><Stat label="Low Stock" value="0" note="Stock alerts coming next" icon="!"/></section><section className="dash-grid"><div className="panel large-panel"><div className="panel-head"><div><h2>Sales overview</h2><p>Analytics will use real local data later.</p></div><span className="period">Coming later</span></div><div className="empty-chart"><div className="chart-line"></div><span>No business transactions recorded yet</span></div></div><div className="panel"><div className="panel-head"><div><h2>Module roadmap</h2><p>Development order</p></div></div><div className="quick-list">{NAV.slice(1).map(([name])=><button key={name} onClick={()=>setActive(name)}>{name}<span>→</span></button>)}</div></div></section></> : <div className="panel section-placeholder"><div className="placeholder-icon">⌁</div><h2>{active}</h2><p>The navigation section is in place. Its database tables and features will be implemented separately.</p></div>}
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Overview' ? <><section className="stat-grid"><Stat label="Total Products" value="0" note="Products module coming next" icon="▦"/><Stat label="Stock Value" value="₨ 0" note="Stock module coming next" icon="◈"/><Stat label="Today Sales" value="₨ 0" note="Sales module coming next" icon="↗"/><Stat label="Low Stock" value="0" note="Stock alerts coming next" icon="!"/></section><section className="dash-grid"><div className="panel large-panel"><div className="panel-head"><div><h2>Sales overview</h2><p>Analytics will use real local data later.</p></div><span className="period">Coming later</span></div><div className="empty-chart"><div className="chart-line"></div><span>No business transactions recorded yet</span></div></div><div className="panel"><div className="panel-head"><div><h2>Module roadmap</h2><p>Development order</p></div></div><div className="quick-list">{NAV.slice(1).map(([name])=><button key={name} onClick={()=>setActive(name)}>{name}<span>→</span></button>)}</div></div></section></> : <div className="panel section-placeholder"><div className="placeholder-icon">⌁</div><h2>{active}</h2><p>The navigation section is in place. Its database tables and features will be implemented separately.</p></div>}
     </main>
   </div>;
 }
