@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('inventoryAPI', {
   createAccount: (data) => ipcRenderer.invoke('auth:create', data),
   login: (data) => ipcRenderer.invoke('auth:login', data),
   getDashboardSummary: () => ipcRenderer.invoke('dashboard:summary'),
+  listSales: (filters) => ipcRenderer.invoke('sales:list', filters),
+  createSale: (data) => ipcRenderer.invoke('sales:create', data),
   listPurchases: (filters) => ipcRenderer.invoke('purchases:list', filters),
   createPurchase: (data) => ipcRenderer.invoke('purchases:create', data),
   listStockMovements: (filters) => ipcRenderer.invoke('stock:movements', filters),
