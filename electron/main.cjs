@@ -69,6 +69,31 @@ function createDatabase() {
     CREATE INDEX IF NOT EXISTS idx_stock_movements_created_at ON stock_movements(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_stock_movements_product_id ON stock_movements(product_id);
 
+    CREATE TABLE IF NOT EXISTS purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purchase_number TEXT NOT NULL UNIQUE,
+      supplier_name TEXT NOT NULL,
+      supplier_phone TEXT NOT NULL DEFAULT '',
+      invoice_number TEXT NOT NULL DEFAULT '',
+      purchase_date TEXT NOT NULL,
+      subtotal REAL NOT NULL DEFAULT 0,
+      paid_amount REAL NOT NULL DEFAULT 0,
+      payment_status TEXT NOT NULL DEFAULT 'Unpaid',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS purchase_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+      product_id INTEGER,
+      product_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      unit_cost REAL NOT NULL,
+      line_total REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(purchase_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_id ON purchase_items(purchase_id);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -296,6 +321,88 @@ app.whenReady().then(() => {
       return { ok: true, ...result };
     } catch (error) {
       return { ok: false, error: error.message || 'Unable to adjust stock.' };
+    }
+  });
+
+  ipcMain.handle('purchases:list', (_event, filters = {}) => {
+    try {
+      const conditions = [];
+      const params = [];
+      if (filters.status && filters.status !== 'All') {
+        conditions.push('payment_status = ?');
+        params.push(String(filters.status));
+      }
+      if (filters.from) {
+        conditions.push('date(purchase_date) >= date(?)');
+        params.push(String(filters.from));
+      }
+      if (filters.to) {
+        conditions.push('date(purchase_date) <= date(?)');
+        params.push(String(filters.to));
+      }
+      if (filters.search) {
+        conditions.push('(purchase_number LIKE ? OR supplier_name LIKE ? OR invoice_number LIKE ?)');
+        const query = '%' + String(filters.search).trim() + '%';
+        params.push(query, query, query);
+      }
+      const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const purchases = db.prepare(`SELECT * FROM purchases ${where} ORDER BY date(purchase_date) DESC, id DESC LIMIT 1000`).all(...params);
+      const itemQuery = db.prepare('SELECT id, product_id, product_name, quantity, unit_cost, line_total FROM purchase_items WHERE purchase_id = ? ORDER BY id');
+      return { ok: true, purchases: purchases.map(purchase => ({ ...purchase, items: itemQuery.all(purchase.id) })) };
+    } catch (error) {
+      return { ok: false, error: 'Unable to load purchase records.' };
+    }
+  });
+
+  ipcMain.handle('purchases:create', (_event, data) => {
+    const supplierName = String(data?.supplierName || '').trim();
+    const supplierPhone = String(data?.supplierPhone || '').trim();
+    const invoiceNumber = String(data?.invoiceNumber || '').trim();
+    const purchaseDate = String(data?.purchaseDate || '').trim();
+    const notes = String(data?.notes || '').trim();
+    const paidAmount = Number(data?.paidAmount);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!supplierName) return { ok: false, error: 'Supplier name is required.' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(purchaseDate) || Number.isNaN(Date.parse(purchaseDate + 'T00:00:00'))) return { ok: false, error: 'Choose a valid purchase date.' };
+    if (!items.length) return { ok: false, error: 'Add at least one product to this purchase.' };
+    if (!Number.isFinite(paidAmount) || paidAmount < 0) return { ok: false, error: 'Paid amount must be zero or more.' };
+    try {
+      const createPurchase = db.transaction(() => {
+        let subtotal = 0;
+        const preparedItems = items.map(item => {
+          const productId = Number(item.productId);
+          const quantity = Number(item.quantity);
+          const unitCost = Number(item.unitCost);
+          if (!Number.isInteger(productId) || productId < 1) throw new Error('Choose a valid product for every line.');
+          if (!Number.isInteger(quantity) || quantity < 1) throw new Error('Each purchase quantity must be a whole number greater than zero.');
+          if (!Number.isFinite(unitCost) || unitCost < 0) throw new Error('Purchase costs must be valid non-negative numbers.');
+          const product = db.prepare('SELECT id, name, buying_price, stock_quantity FROM products WHERE id = ?').get(productId);
+          if (!product) throw new Error('One of the selected products no longer exists.');
+          const lineTotal = Math.round((quantity * unitCost + Number.EPSILON) * 100) / 100;
+          subtotal += lineTotal;
+          return { product, productId, quantity, unitCost, lineTotal };
+        });
+        subtotal = Math.round((subtotal + Number.EPSILON) * 100) / 100;
+        if (paidAmount > subtotal + 0.005) throw new Error('Paid amount cannot exceed the purchase total.');
+        const paymentStatus = paidAmount <= 0 ? 'Unpaid' : paidAmount + 0.005 >= subtotal ? 'Paid' : 'Partial';
+        const purchaseNumber = 'PUR-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14) + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
+        const purchase = db.prepare('INSERT INTO purchases (purchase_number, supplier_name, supplier_phone, invoice_number, purchase_date, subtotal, paid_amount, payment_status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(purchaseNumber, supplierName, supplierPhone, invoiceNumber, purchaseDate, subtotal, paidAmount, paymentStatus, notes);
+        const insertItem = db.prepare('INSERT INTO purchase_items (purchase_id, product_id, product_name, quantity, unit_cost, line_total) VALUES (?, ?, ?, ?, ?, ?)');
+        const updateProduct = db.prepare('UPDATE products SET stock_quantity = stock_quantity + ?, buying_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+        const insertMovement = db.prepare("INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, 'addition', ?, ?, ?, 'Purchase received', ?)");
+        for (const item of preparedItems) {
+          insertItem.run(purchase.lastInsertRowid, item.productId, item.product.name, item.quantity, item.unitCost, item.lineTotal);
+          const previous = Number(item.product.stock_quantity || 0);
+          const next = previous + item.quantity;
+          updateProduct.run(item.quantity, item.unitCost, item.productId);
+          insertMovement.run(item.productId, item.product.name, item.quantity, previous, next, purchaseNumber + (invoiceNumber ? ' · Invoice ' + invoiceNumber : ''));
+        }
+        return { id: purchase.lastInsertRowid, purchaseNumber, subtotal, paidAmount, paymentStatus };
+      });
+      return { ok: true, ...createPurchase() };
+    } catch (error) {
+      return { ok: false, error: error.message || 'Unable to save this purchase.' };
     }
   });
 
