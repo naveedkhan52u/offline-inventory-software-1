@@ -252,6 +252,152 @@ function Products({ currency = 'PKR' }) {
   </div>;
 }
 
+function Sales({ currency = 'PKR' }) {
+  const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [form, setForm] = useState({
+    customerName: '', customerPhone: '', saleDate: new Date().toISOString().slice(0, 10),
+    discount: '0', paidAmount: '0', paymentMethod: 'Cash', notes: '',
+    items: [{ productId: '', quantity: '1', unitPrice: '' }]
+  });
+
+  const load = async () => {
+    try {
+      const [productResult, salesResult] = await Promise.all([
+        window.inventoryAPI.listProducts(),
+        window.inventoryAPI.listSales({ status: statusFilter, from: fromDate, to: toDate, search })
+      ]);
+      if (productResult?.ok) setProducts(productResult.products || []);
+      else setError(productResult?.error || 'Unable to load products.');
+      if (salesResult?.ok) setSales(salesResult.sales || []);
+      else setError(salesResult?.error || 'Unable to load sales.');
+    } catch (e) { setError('Sales data could not be loaded from the local database.'); }
+  };
+
+  useEffect(() => { load(); }, [statusFilter, fromDate, toDate, search]);
+
+  const money = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(value || 0));
+  const totalSales = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+  const collected = sales.reduce((sum, sale) => sum + Number(sale.paid_amount || 0), 0);
+  const outstanding = sales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total || 0) - Number(sale.paid_amount || 0)), 0);
+  const estimatedProfit = sales.reduce((sum, sale) => sum + sale.items.reduce((itemSum, item) => itemSum + Number(item.line_profit || 0), 0) - Number(sale.discount || 0), 0);
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const updateItem = (index, key, value) => setForm(prev => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, [key]: value } : item) }));
+  const addLine = () => setForm(prev => ({ ...prev, items: [...prev.items, { productId: '', quantity: '1', unitPrice: '' }] }));
+  const removeLine = index => setForm(prev => ({ ...prev, items: prev.items.length === 1 ? prev.items : prev.items.filter((_, i) => i !== index) }));
+  const lineTotal = item => Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unitPrice) || 0);
+  const subtotal = form.items.reduce((sum, item) => sum + lineTotal(item), 0);
+  const discount = Math.max(0, Number(form.discount) || 0);
+  const total = Math.max(0, subtotal - discount);
+
+  const chooseProduct = (index, productId) => {
+    const product = products.find(p => String(p.id) === String(productId));
+    setForm(prev => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, productId, unitPrice: product ? String(product.selling_price ?? 0) : '' } : item) }));
+  };
+
+  const resetForm = () => setForm({
+    customerName: '', customerPhone: '', saleDate: new Date().toISOString().slice(0, 10),
+    discount: '0', paidAmount: '0', paymentMethod: 'Cash', notes: '',
+    items: [{ productId: '', quantity: '1', unitPrice: '' }]
+  });
+
+  const submit = async event => {
+    event.preventDefault(); setError(''); setMessage('');
+    if (form.items.some(item => !item.productId || !Number.isInteger(Number(item.quantity)) || Number(item.quantity) < 1 || !Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0)) return setError('Choose a product and enter a valid whole-number quantity and selling price for every line.');
+    if (discount > subtotal) return setError('Discount cannot exceed the sale subtotal.');
+    const paidAmount = Number(form.paidAmount);
+    if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > total + 0.005) return setError('Amount paid must be between zero and the final sale total.');
+    setBusy(true);
+    try {
+      const result = await window.inventoryAPI.createSale({
+        customerName: form.customerName, customerPhone: form.customerPhone, saleDate: form.saleDate,
+        discount, paidAmount, paymentMethod: form.paymentMethod, notes: form.notes,
+        items: form.items.map(item => ({ productId: Number(item.productId), quantity: Number(item.quantity), unitPrice: Number(item.unitPrice) }))
+      });
+      if (!result?.ok) setError(result?.error || 'Unable to save sale.');
+      else {
+        setMessage('Sale ' + result.saleNumber + ' saved. Stock quantities have been updated.');
+        setShowForm(false); resetForm(); await load();
+      }
+    } catch (e) { setError('The local database could not save this sale.'); }
+    finally { setBusy(false); }
+  };
+
+  return <div className="sales-page">
+    <section className="sales-summary">
+      <div><span>Sales total</span><strong>{currency} {money(totalSales)}</strong><small>Matching records after discounts</small></div>
+      <div><span>Payments collected</span><strong>{currency} {money(collected)}</strong><small>Recorded payments received</small></div>
+      <div><span>Customer balances</span><strong>{currency} {money(outstanding)}</strong><small>Outstanding on listed sales</small></div>
+      <div><span>Estimated gross profit</span><strong>{currency} {money(estimatedProfit)}</strong><small>Uses saved buying costs, less discounts</small></div>
+    </section>
+    <div className="sales-toolbar">
+      <div><h2>Sales</h2><p>Create sales, reduce stock automatically, and track payments and profit.</p></div>
+      <button className="btn primary" onClick={() => { setShowForm(value => !value); setError(''); setMessage(''); }}>＋ New sale</button>
+    </div>
+    {message && <div className="product-message">{message}</div>}
+    {error && <div className="form-error product-error">{error}</div>}
+    {showForm && <form className="panel sales-form" onSubmit={submit}>
+      <div className="panel-head"><div><h2>Record a sale</h2><p>Products are deducted from inventory only when the sale is saved.</p></div><button type="button" className="icon-close" onClick={() => setShowForm(false)}>×</button></div>
+      <div className="sales-header-fields">
+        <label>Customer name<input value={form.customerName} onChange={e=>update('customerName',e.target.value)} placeholder="Walk-in customer if blank" maxLength="160" /></label>
+        <label>Customer phone<input value={form.customerPhone} onChange={e=>update('customerPhone',e.target.value)} placeholder="Optional phone number" maxLength="50" /></label>
+        <label>Sale date *<input type="date" required value={form.saleDate} onChange={e=>update('saleDate',e.target.value)} /></label>
+        <label>Payment method<select value={form.paymentMethod} onChange={e=>update('paymentMethod',e.target.value)}>{['Cash','Card','Bank transfer','Mobile wallet','Other'].map(method=><option key={method}>{method}</option>)}</select></label>
+      </div>
+      <div className="sales-lines-heading"><div><h3>Items sold</h3><p>Available stock is shown beside each product.</p></div><button type="button" className="btn ghost" onClick={addLine} disabled={!products.length}>＋ Add item</button></div>
+      {!products.length && <div className="purchase-notice">Add products in the Products section before recording a sale.</div>}
+      <div className="sales-lines">
+        {form.items.map((item,index)=>{
+          const product=products.find(p=>String(p.id)===String(item.productId));
+          const available=Number(product?.stock_quantity||0);
+          return <div className="sales-line" key={index}>
+            <label>Product *<select required value={item.productId} onChange={e=>chooseProduct(index,e.target.value)}><option value="">Select product</option>{products.map(p=><option key={p.id} value={p.id}>{p.name} · available {p.stock_quantity}</option>)}</select>{product&&<small className={available<=Number(product.low_stock_threshold||0)?'sales-stock-warning':''}>{available} units available</small>}</label>
+            <label>Quantity *<input type="number" min="1" step="1" required value={item.quantity} onChange={e=>updateItem(index,'quantity',e.target.value)} /></label>
+            <label>Unit price *<input type="number" min="0" step="0.01" required value={item.unitPrice} onChange={e=>updateItem(index,'unitPrice',e.target.value)} /></label>
+            <div className="sales-line-total"><span>Line total</span><strong>{currency} {money(lineTotal(item))}</strong></div>
+            <button type="button" className="purchase-remove-line" disabled={form.items.length===1} onClick={()=>removeLine(index)} title="Remove item">×</button>
+          </div>;
+        })}
+      </div>
+      <div className="sales-bottom-fields">
+        <label>Discount amount<input type="number" min="0" max={subtotal} step="0.01" value={form.discount} onChange={e=>update('discount',e.target.value)} /><small>Deducted from the subtotal.</small></label>
+        <label>Amount paid now *<input type="number" required min="0" max={total} step="0.01" value={form.paidAmount} onChange={e=>update('paidAmount',e.target.value)} /><small>Enter 0 for an unpaid sale.</small></label>
+        <label>Notes (optional)<textarea rows="3" value={form.notes} onChange={e=>update('notes',e.target.value)} placeholder="Order reference or delivery notes" maxLength="1000" /></label>
+        <div className="sales-totals"><div><span>Subtotal</span><strong>{currency} {money(subtotal)}</strong></div><div><span>Discount</span><strong>− {currency} {money(discount)}</strong></div><div><span>Sale total</span><strong>{currency} {money(total)}</strong></div><div><span>Balance due</span><strong>{currency} {money(Math.max(0,total-(Number(form.paidAmount)||0)))}</strong></div></div>
+      </div>
+      <div className="product-form-actions"><button type="button" className="btn ghost" onClick={()=>{setShowForm(false);setError('');}}>Cancel</button><button className="btn primary" disabled={busy||!products.length}>{busy?'Saving…':'Save sale & update stock'}</button></div>
+    </form>}
+    <section className="panel sales-table-panel">
+      <div className="panel-head"><div><h2>Sales history</h2><p>Latest 1,000 records · {sales.length} shown</p></div></div>
+      <div className="sales-filters">
+        <div className="product-search"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search sale no., customer, phone..." /></div>
+        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option><option>Paid</option><option>Partial</option><option>Unpaid</option></select>
+        <label>From<input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} /></label>
+        <label>To<input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} /></label>
+      </div>
+      {sales.length ? <div className="table-wrap"><table className="product-table sales-table"><thead><tr><th>Sale no.</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Paid</th><th>Balance due</th><th>Payment</th><th>Status</th><th>Details</th></tr></thead><tbody>
+        {sales.map(sale=><React.Fragment key={sale.id}><tr><td><strong>{sale.sale_number}</strong></td><td>{sale.sale_date}</td><td><strong>{sale.customer_name}</strong><small className="purchase-subline">{sale.customer_phone||''}</small></td><td>{sale.items.reduce((sum,item)=>sum+Number(item.quantity||0),0)} units / {sale.items.length} lines</td><td>{currency} {money(sale.total)}</td><td>{currency} {money(sale.paid_amount)}</td><td>{currency} {money(Math.max(0,Number(sale.total)-Number(sale.paid_amount)))}</td><td>{sale.payment_method}</td><td><span className={'stock-badge '+(sale.payment_status==='Paid'?'ok':sale.payment_status==='Partial'?'partial':'low')}>{sale.payment_status}</span></td><td><button className="purchase-detail-button" onClick={()=>setSales(current=>current.map(s=>s.id===sale.id?{...s,detailsOpen:!s.detailsOpen}:s))}>{sale.detailsOpen?'Hide':'View receipt'}</button></td></tr>
+          {sale.detailsOpen&&<tr className="purchase-detail-row"><td colSpan="10"><div className="sales-receipt">
+            <div className="sales-receipt-head"><div><h3>StockDesk · Sales receipt</h3><p>{sale.sale_number} · {sale.sale_date}</p></div><button className="btn ghost" onClick={()=>window.print()}>Print receipt</button></div>
+            <div className="sales-receipt-meta"><span><b>Customer:</b> {sale.customer_name}</span>{sale.customer_phone&&<span><b>Phone:</b> {sale.customer_phone}</span>}<span><b>Payment:</b> {sale.payment_method} · {sale.payment_status}</span>{sale.notes&&<span><b>Notes:</b> {sale.notes}</span>}</div>
+            <table><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Line total</th></tr></thead><tbody>{sale.items.map(item=><tr key={item.id}><td>{item.product_name}</td><td>{item.quantity}</td><td>{currency} {money(item.unit_price)}</td><td>{currency} {money(item.line_total)}</td></tr>)}</tbody></table>
+            <div className="sales-receipt-totals"><span>Subtotal: {currency} {money(sale.subtotal)}</span><span>Discount: {currency} {money(sale.discount)}</span><b>Total: {currency} {money(sale.total)}</b><span>Paid: {currency} {money(sale.paid_amount)}</span><span>Balance due: {currency} {money(Math.max(0,Number(sale.total)-Number(sale.paid_amount)))}</span></div>
+          </div></td></tr>}
+        </React.Fragment>)}
+      </tbody></table></div> : <div className="products-empty"><div>₨</div><h3>No sales records found</h3><p>{products.length?'Record your first sale to update stock and track revenue.':'Add products first, then record a sale.'}</p><button className="btn primary" onClick={()=>setShowForm(true)} disabled={!products.length}>New sale</button></div>}
+    </section>
+    <p className="sales-footnote">Sales reduce stock and create stock movement records in the same transaction. Item costs are saved at sale time for profit reporting. Existing sales cannot yet be edited, deleted, or settled with later payments.</p>
+  </div>;
+}
+
 function Purchases({ currency = 'PKR' }) {
   const [products, setProducts] = useState([]);
   const [purchases, setPurchases] = useState([]);
@@ -572,7 +718,7 @@ function Dashboard({ username, businessName, onLogout }) {
     </aside>
     <main className="dash-main">
       <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (businessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Overview' ? <>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Overview' ? <>
         {summaryError && <div className="form-error">{summaryError}</div>}
         <section className="stat-grid">
           <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
