@@ -54,6 +54,21 @@ function createDatabase() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS stock_movements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER,
+      product_name TEXT NOT NULL,
+      movement_type TEXT NOT NULL,
+      quantity_change INTEGER NOT NULL,
+      previous_quantity INTEGER NOT NULL,
+      new_quantity INTEGER NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_created_at ON stock_movements(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_stock_movements_product_id ON stock_movements(product_id);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -222,6 +237,66 @@ app.whenReady().then(() => {
       categories,
       recentProducts
     };
+  });
+
+  ipcMain.handle('stock:movements', (_event, filters = {}) => {
+    try {
+      const conditions = [];
+      const params = [];
+      if (filters.productId && Number.isInteger(Number(filters.productId))) {
+        conditions.push('product_id = ?');
+        params.push(Number(filters.productId));
+      }
+      if (filters.type && filters.type !== 'All') {
+        conditions.push('movement_type = ?');
+        params.push(String(filters.type));
+      }
+      if (filters.from) {
+        conditions.push("date(created_at) >= date(?)");
+        params.push(String(filters.from));
+      }
+      if (filters.to) {
+        conditions.push("date(created_at) <= date(?)");
+        params.push(String(filters.to));
+      }
+      const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const movements = db.prepare(`SELECT * FROM stock_movements ${where} ORDER BY datetime(created_at) DESC, id DESC LIMIT 500`).all(...params);
+      return { ok: true, movements };
+    } catch (error) {
+      return { ok: false, error: 'Unable to load stock movement history.' };
+    }
+  });
+
+  ipcMain.handle('stock:adjust', (_event, data) => {
+    const productId = Number(data?.productId);
+    const operation = String(data?.operation || '');
+    const quantity = Number(data?.quantity);
+    const reason = String(data?.reason || '').trim();
+    const notes = String(data?.notes || '').trim();
+    if (!Number.isInteger(productId) || productId < 1) return { ok: false, error: 'Choose a valid product.' };
+    if (!['add', 'remove', 'set'].includes(operation)) return { ok: false, error: 'Choose a valid stock adjustment type.' };
+    if (!Number.isInteger(quantity) || quantity < 0 || (operation !== 'set' && quantity < 1)) return { ok: false, error: 'Enter a valid whole-number quantity.' };
+    if (!reason) return { ok: false, error: 'Select a reason for this adjustment.' };
+    try {
+      const adjust = db.transaction(() => {
+        const product = db.prepare('SELECT id, name, stock_quantity FROM products WHERE id = ?').get(productId);
+        if (!product) throw new Error('Product not found.');
+        const previous = Number(product.stock_quantity || 0);
+        const next = operation === 'add' ? previous + quantity : operation === 'remove' ? previous - quantity : quantity;
+        if (next < 0) throw new Error('Stock cannot become negative. Reduce the quantity or use a smaller removal.');
+        const change = next - previous;
+        if (change === 0) throw new Error('The new stock quantity is the same as the current quantity.');
+        db.prepare('UPDATE products SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(next, productId);
+        const movementType = operation === 'add' ? 'addition' : operation === 'remove' ? 'removal' : 'correction';
+        db.prepare('INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(product.id, product.name, movementType, change, previous, next, reason, notes);
+        return { id: product.id, name: product.name, previous, next, change };
+      });
+      const result = adjust();
+      return { ok: true, ...result };
+    } catch (error) {
+      return { ok: false, error: error.message || 'Unable to adjust stock.' };
+    }
   });
 
   ipcMain.handle('products:list', () => ({
