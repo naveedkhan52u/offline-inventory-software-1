@@ -252,6 +252,149 @@ function Products({ currency = 'PKR' }) {
   </div>;
 }
 
+function Purchases({ currency = 'PKR' }) {
+  const [products, setProducts] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [form, setForm] = useState({
+    supplierName: '', supplierPhone: '', invoiceNumber: '',
+    purchaseDate: new Date().toISOString().slice(0, 10), paidAmount: '0', notes: '',
+    items: [{ productId: '', quantity: '1', unitCost: '' }]
+  });
+
+  const load = async () => {
+    try {
+      const [productResult, purchaseResult] = await Promise.all([
+        window.inventoryAPI.listProducts(),
+        window.inventoryAPI.listPurchases({ status: statusFilter, from: fromDate, to: toDate, search })
+      ]);
+      if (productResult?.ok) setProducts(productResult.products || []);
+      else setError(productResult?.error || 'Unable to load products.');
+      if (purchaseResult?.ok) setPurchases(purchaseResult.purchases || []);
+      else setError(purchaseResult?.error || 'Unable to load purchases.');
+    } catch (e) {
+      setError('Purchase data could not be loaded from the local database.');
+    }
+  };
+
+  useEffect(() => { load(); }, [statusFilter, fromDate, toDate, search]);
+
+  const money = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(value || 0));
+  const totalSpend = purchases.reduce((sum, purchase) => sum + Number(purchase.subtotal || 0), 0);
+  const outstanding = purchases.reduce((sum, purchase) => sum + Math.max(0, Number(purchase.subtotal || 0) - Number(purchase.paid_amount || 0)), 0);
+  const unpaidCount = purchases.filter(purchase => purchase.payment_status !== 'Paid').length;
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const updateItem = (index, key, value) => setForm(prev => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, [key]: value } : item) }));
+  const addLine = () => setForm(prev => ({ ...prev, items: [...prev.items, { productId: '', quantity: '1', unitCost: '' }] }));
+  const removeLine = index => setForm(prev => ({ ...prev, items: prev.items.length === 1 ? prev.items : prev.items.filter((_, i) => i !== index) }));
+  const lineTotal = item => Math.max(0, Number(item.quantity) || 0) * Math.max(0, Number(item.unitCost) || 0);
+  const draftTotal = form.items.reduce((sum, item) => sum + lineTotal(item), 0);
+
+  const chooseProduct = (index, productId) => {
+    const product = products.find(p => String(p.id) === String(productId));
+    setForm(prev => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, productId, unitCost: product ? String(product.buying_price ?? 0) : '' } : item) }));
+  };
+
+  const resetForm = () => setForm({
+    supplierName: '', supplierPhone: '', invoiceNumber: '',
+    purchaseDate: new Date().toISOString().slice(0, 10), paidAmount: '0', notes: '',
+    items: [{ productId: '', quantity: '1', unitCost: '' }]
+  });
+
+  const submit = async event => {
+    event.preventDefault();
+    setError(''); setMessage('');
+    if (!form.supplierName.trim()) return setError('Supplier name is required.');
+    if (!form.items.length || form.items.some(item => !item.productId || !Number.isInteger(Number(item.quantity)) || Number(item.quantity) < 1 || !Number.isFinite(Number(item.unitCost)) || Number(item.unitCost) < 0)) return setError('Choose a product and enter a valid quantity and unit cost for every line.');
+    const paidAmount = Number(form.paidAmount);
+    if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > draftTotal + 0.005) return setError('Paid amount must be between zero and the purchase total.');
+    setBusy(true);
+    try {
+      const result = await window.inventoryAPI.createPurchase({
+        supplierName: form.supplierName,
+        supplierPhone: form.supplierPhone,
+        invoiceNumber: form.invoiceNumber,
+        purchaseDate: form.purchaseDate,
+        paidAmount,
+        notes: form.notes,
+        items: form.items.map(item => ({ productId: Number(item.productId), quantity: Number(item.quantity), unitCost: Number(item.unitCost) }))
+      });
+      if (!result?.ok) setError(result?.error || 'Unable to save purchase.');
+      else {
+        setMessage('Purchase ' + result.purchaseNumber + ' saved. Stock quantities have been updated.');
+        setShowForm(false);
+        resetForm();
+        await load();
+      }
+    } catch (e) {
+      setError('The local database could not save this purchase.');
+    } finally { setBusy(false); }
+  };
+
+  return <div className="purchases-page">
+    <section className="purchase-summary">
+      <div><span>Purchase records</span><strong>{purchases.length}</strong><small>Matching your current filters</small></div>
+      <div><span>Total purchase value</span><strong>{currency} {money(totalSpend)}</strong><small>Recorded purchase totals</small></div>
+      <div><span>Outstanding balance</span><strong>{currency} {money(outstanding)}</strong><small>Unpaid amounts in this list</small></div>
+      <div><span>Payment pending</span><strong>{unpaidCount}</strong><small>Partial or unpaid purchases</small></div>
+    </section>
+    <div className="purchase-toolbar">
+      <div><h2>Purchases</h2><p>Record supplier purchases, track payment, and automatically increase stock.</p></div>
+      <button className="btn primary" onClick={() => { setShowForm(value => !value); setError(''); setMessage(''); }}>＋ Record purchase</button>
+    </div>
+    {message && <div className="product-message">{message}</div>}
+    {error && <div className="form-error product-error">{error}</div>}
+    {showForm && <form className="panel purchase-form" onSubmit={submit}>
+      <div className="panel-head"><div><h2>New purchase</h2><p>Saving this record adds the purchased quantities to Stock and Products.</p></div><button type="button" className="icon-close" onClick={() => setShowForm(false)}>×</button></div>
+      <div className="purchase-header-fields">
+        <label>Supplier name *<input required value={form.supplierName} onChange={e=>update('supplierName',e.target.value)} placeholder="Supplier or company name" maxLength="160" /></label>
+        <label>Supplier phone<input value={form.supplierPhone} onChange={e=>update('supplierPhone',e.target.value)} placeholder="Phone number" maxLength="50" /></label>
+        <label>Invoice / reference<input value={form.invoiceNumber} onChange={e=>update('invoiceNumber',e.target.value)} placeholder="Supplier invoice number" maxLength="100" /></label>
+        <label>Purchase date *<input type="date" required value={form.purchaseDate} onChange={e=>update('purchaseDate',e.target.value)} /></label>
+      </div>
+      <div className="purchase-lines-heading"><div><h3>Purchased items</h3><p>Choose products already saved in the Products section.</p></div><button type="button" className="btn ghost" onClick={addLine} disabled={!products.length}>＋ Add item</button></div>
+      {!products.length && <div className="purchase-notice">Add products in the Products section before recording purchases.</div>}
+      <div className="purchase-lines">
+        {form.items.map((item,index)=><div className="purchase-line" key={index}>
+          <label>Product *<select required value={item.productId} onChange={e=>chooseProduct(index,e.target.value)}><option value="">Select product</option>{products.map(product=><option key={product.id} value={product.id}>{product.name} · stock {product.stock_quantity}</option>)}</select></label>
+          <label>Quantity *<input type="number" min="1" step="1" required value={item.quantity} onChange={e=>updateItem(index,'quantity',e.target.value)} /></label>
+          <label>Unit cost *<input type="number" min="0" step="0.01" required value={item.unitCost} onChange={e=>updateItem(index,'unitCost',e.target.value)} /></label>
+          <div className="purchase-line-total"><span>Line total</span><strong>{currency} {money(lineTotal(item))}</strong></div>
+          <button type="button" className="purchase-remove-line" disabled={form.items.length===1} onClick={()=>removeLine(index)} title="Remove item">×</button>
+        </div>)}
+      </div>
+      <div className="purchase-bottom-fields">
+        <label>Amount paid now *<input type="number" required min="0" max={draftTotal} step="0.01" value={form.paidAmount} onChange={e=>update('paidAmount',e.target.value)} /><small>Enter 0 if the supplier has not been paid.</small></label>
+        <label>Notes (optional)<textarea rows="3" value={form.notes} onChange={e=>update('notes',e.target.value)} placeholder="Payment reference, delivery notes, etc." maxLength="1000" /></label>
+        <div className="purchase-totals"><div><span>Purchase total</span><strong>{currency} {money(draftTotal)}</strong></div><div><span>Paid now</span><strong>{currency} {money(form.paidAmount)}</strong></div><div><span>Balance due</span><strong>{currency} {money(Math.max(0,draftTotal-(Number(form.paidAmount)||0)))}</strong></div></div>
+      </div>
+      <div className="product-form-actions"><button type="button" className="btn ghost" onClick={()=>{setShowForm(false);setError('');}}>Cancel</button><button className="btn primary" disabled={busy||!products.length}>{busy?'Saving…':'Save purchase & update stock'}</button></div>
+    </form>}
+    <section className="panel purchase-table-panel">
+      <div className="panel-head"><div><h2>Purchase history</h2><p>Latest 1,000 records · {purchases.length} shown</p></div></div>
+      <div className="purchase-filters">
+        <div className="product-search"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search purchase no., supplier, invoice..." /></div>
+        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option><option>Paid</option><option>Partial</option><option>Unpaid</option></select>
+        <label>From<input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} /></label>
+        <label>To<input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} /></label>
+      </div>
+      {purchases.length ? <div className="table-wrap"><table className="product-table purchase-table"><thead><tr><th>Purchase no.</th><th>Date</th><th>Supplier</th><th>Invoice</th><th>Items</th><th>Total</th><th>Paid</th><th>Balance due</th><th>Status</th><th>Details</th></tr></thead><tbody>
+        {purchases.map(purchase=><React.Fragment key={purchase.id}><tr><td><strong>{purchase.purchase_number}</strong></td><td>{purchase.purchase_date}</td><td><strong>{purchase.supplier_name}</strong><small className="purchase-subline">{purchase.supplier_phone||''}</small></td><td>{purchase.invoice_number||'—'}</td><td>{purchase.items.reduce((sum,item)=>sum+Number(item.quantity||0),0)} units / {purchase.items.length} lines</td><td>{currency} {money(purchase.subtotal)}</td><td>{currency} {money(purchase.paid_amount)}</td><td>{currency} {money(Math.max(0,Number(purchase.subtotal)-Number(purchase.paid_amount)))}</td><td><span className={'stock-badge '+(purchase.payment_status==='Paid'?'ok':purchase.payment_status==='Partial'?'partial':'low')}>{purchase.payment_status}</span></td><td><button className="purchase-detail-button" onClick={()=>setPurchases(current=>current.map(p=>p.id===purchase.id?{...p,detailsOpen:!p.detailsOpen}:p))}>{purchase.detailsOpen?'Hide':'View items'}</button></td></tr>
+          {purchase.detailsOpen && <tr className="purchase-detail-row"><td colSpan="10"><div className="purchase-detail-content"><div><b>Supplier:</b> {purchase.supplier_name} {purchase.supplier_phone&&'· '+purchase.supplier_phone}</div>{purchase.notes&&<div><b>Notes:</b> {purchase.notes}</div>}<table><thead><tr><th>Product</th><th>Qty</th><th>Unit cost</th><th>Line total</th></tr></thead><tbody>{purchase.items.map(item=><tr key={item.id}><td>{item.product_name}</td><td>{item.quantity}</td><td>{currency} {money(item.unit_cost)}</td><td>{currency} {money(item.line_total)}</td></tr>)}</tbody></table></div></td></tr>}
+        </React.Fragment>)}
+      </tbody></table></div> : <div className="products-empty"><div>＋</div><h3>No purchase records found</h3><p>{products.length?'Record your first supplier purchase to keep costs and stock up to date.':'Add products first, then record a purchase.'}</p><button className="btn primary" onClick={()=>setShowForm(true)} disabled={!products.length}>Record purchase</button></div>}
+    </section>
+    <p className="purchase-footnote">Purchases immediately increase stock and are added to stock movement history. The unit buying price on each product is updated to the latest recorded purchase cost. Payment balances are tracked per purchase; payment settlement and editing existing purchase records are not enabled yet.</p>
+  </div>;
+}
+
 function Stock({ currency = 'PKR' }) {
   const [products, setProducts] = useState([]);
   const [movements, setMovements] = useState([]);
@@ -429,7 +572,7 @@ function Dashboard({ username, businessName, onLogout }) {
     </aside>
     <main className="dash-main">
       <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (businessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Overview' ? <>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Overview' ? <>
         {summaryError && <div className="form-error">{summaryError}</div>}
         <section className="stat-grid">
           <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
