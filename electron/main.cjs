@@ -94,6 +94,35 @@ function createDatabase() {
     CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(purchase_date DESC);
     CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_id ON purchase_items(purchase_id);
 
+    CREATE TABLE IF NOT EXISTS sales (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sale_number TEXT NOT NULL UNIQUE,
+      customer_name TEXT NOT NULL DEFAULT 'Walk-in customer',
+      customer_phone TEXT NOT NULL DEFAULT '',
+      sale_date TEXT NOT NULL,
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      paid_amount REAL NOT NULL DEFAULT 0,
+      payment_method TEXT NOT NULL DEFAULT 'Cash',
+      payment_status TEXT NOT NULL DEFAULT 'Unpaid',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS sale_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+      product_id INTEGER,
+      product_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      unit_price REAL NOT NULL,
+      unit_cost REAL NOT NULL DEFAULT 0,
+      line_total REAL NOT NULL,
+      line_profit REAL NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -403,6 +432,90 @@ app.whenReady().then(() => {
       return { ok: true, ...createPurchase() };
     } catch (error) {
       return { ok: false, error: error.message || 'Unable to save this purchase.' };
+    }
+  });
+
+  ipcMain.handle('sales:list', (_event, filters = {}) => {
+    try {
+      const conditions = [];
+      const params = [];
+      if (filters.status && filters.status !== 'All') { conditions.push('payment_status = ?'); params.push(String(filters.status)); }
+      if (filters.from) { conditions.push('date(sale_date) >= date(?)'); params.push(String(filters.from)); }
+      if (filters.to) { conditions.push('date(sale_date) <= date(?)'); params.push(String(filters.to)); }
+      if (filters.search) {
+        conditions.push('(sale_number LIKE ? OR customer_name LIKE ? OR customer_phone LIKE ?)');
+        const query = '%' + String(filters.search).trim() + '%';
+        params.push(query, query, query);
+      }
+      const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const sales = db.prepare(`SELECT * FROM sales ${where} ORDER BY date(sale_date) DESC, id DESC LIMIT 1000`).all(...params);
+      const itemQuery = db.prepare('SELECT id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit FROM sale_items WHERE sale_id = ? ORDER BY id');
+      return { ok: true, sales: sales.map(sale => ({ ...sale, items: itemQuery.all(sale.id) })) };
+    } catch (error) {
+      return { ok: false, error: 'Unable to load sales records.' };
+    }
+  });
+
+  ipcMain.handle('sales:create', (_event, data) => {
+    const customerName = String(data?.customerName || '').trim() || 'Walk-in customer';
+    const customerPhone = String(data?.customerPhone || '').trim();
+    const saleDate = String(data?.saleDate || '').trim();
+    const discount = Number(data?.discount);
+    const paidAmount = Number(data?.paidAmount);
+    const paymentMethod = String(data?.paymentMethod || 'Cash');
+    const notes = String(data?.notes || '').trim();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate) || Number.isNaN(Date.parse(saleDate + 'T00:00:00'))) return { ok: false, error: 'Choose a valid sale date.' };
+    if (!Number.isFinite(discount) || discount < 0) return { ok: false, error: 'Discount must be zero or more.' };
+    if (!Number.isFinite(paidAmount) || paidAmount < 0) return { ok: false, error: 'Paid amount must be zero or more.' };
+    if (!['Cash', 'Card', 'Bank transfer', 'Mobile wallet', 'Other'].includes(paymentMethod)) return { ok: false, error: 'Choose a valid payment method.' };
+    if (!items.length) return { ok: false, error: 'Add at least one product to this sale.' };
+    try {
+      const createSale = db.transaction(() => {
+        const preparedItems = items.map(item => {
+          const productId = Number(item.productId);
+          const quantity = Number(item.quantity);
+          if (!Number.isInteger(productId) || productId < 1) throw new Error('Choose a valid product for every line.');
+          if (!Number.isInteger(quantity) || quantity < 1) throw new Error('Each sale quantity must be a whole number greater than zero.');
+          const product = db.prepare('SELECT id, name, selling_price, buying_price, stock_quantity FROM products WHERE id = ?').get(productId);
+          if (!product) throw new Error('One of the selected products no longer exists.');
+          const unitPrice = item.unitPrice === undefined || item.unitPrice === null || item.unitPrice === '' ? Number(product.selling_price || 0) : Number(item.unitPrice);
+          if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Selling prices must be valid non-negative numbers.');
+          return { product, productId, quantity, unitPrice, unitCost: Number(product.buying_price || 0), lineTotal: Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100 };
+        });
+        const quantities = new Map();
+        for (const item of preparedItems) quantities.set(item.productId, (quantities.get(item.productId) || 0) + item.quantity);
+        for (const [productId, quantity] of quantities) {
+          const product = preparedItems.find(item => item.productId === productId).product;
+          if (Number(product.stock_quantity || 0) < quantity) throw new Error('Not enough stock for ' + product.name + '. Available: ' + Number(product.stock_quantity || 0) + ', requested: ' + quantity + '.');
+        }
+        const subtotal = Math.round((preparedItems.reduce((sum, item) => sum + item.lineTotal, 0) + Number.EPSILON) * 100) / 100;
+        if (discount > subtotal) throw new Error('Discount cannot exceed the sale subtotal.');
+        const total = Math.round((subtotal - discount + Number.EPSILON) * 100) / 100;
+        if (paidAmount > total + 0.005) throw new Error('Paid amount cannot exceed the final sale total.');
+        const paymentStatus = paidAmount <= 0 ? 'Unpaid' : paidAmount + 0.005 >= total ? 'Paid' : 'Partial';
+        const saleNumber = 'SAL-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14) + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
+        const sale = db.prepare('INSERT INTO sales (sale_number, customer_name, customer_phone, sale_date, subtotal, discount, total, paid_amount, payment_method, payment_status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(saleNumber, customerName, customerPhone, saleDate, subtotal, discount, total, paidAmount, paymentMethod, paymentStatus, notes);
+        const insertItem = db.prepare('INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        const updateProduct = db.prepare('UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+        const insertMovement = db.prepare("INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, 'removal', ?, ?, ?, 'Sale / issued', ?)");
+        for (const item of preparedItems) {
+          const lineProfit = Math.round((item.quantity * (item.unitPrice - item.unitCost) + Number.EPSILON) * 100) / 100;
+          insertItem.run(sale.lastInsertRowid, item.productId, item.product.name, item.quantity, item.unitPrice, item.unitCost, item.lineTotal, lineProfit);
+        }
+        for (const [productId, quantity] of quantities) {
+          const product = preparedItems.find(item => item.productId === productId).product;
+          const previous = Number(product.stock_quantity || 0);
+          const next = previous - quantity;
+          updateProduct.run(quantity, productId);
+          insertMovement.run(productId, product.name, -quantity, previous, next, saleNumber + (customerName ? ' · ' + customerName : ''));
+        }
+        return { id: sale.lastInsertRowid, saleNumber, subtotal, discount, total, paidAmount, paymentStatus };
+      });
+      return { ok: true, ...createSale() };
+    } catch (error) {
+      return { ok: false, error: error.message || 'Unable to save this sale.' };
     }
   });
 
