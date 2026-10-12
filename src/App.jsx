@@ -252,6 +252,132 @@ function Products({ currency = 'PKR' }) {
   </div>;
 }
 
+function Stock({ currency = 'PKR' }) {
+  const [products, setProducts] = useState([]);
+  const [movements, setMovements] = useState([]);
+  const [search, setSearch] = useState('');
+  const [stockFilter, setStockFilter] = useState('All');
+  const [movementType, setMovementType] = useState('All');
+  const [showAdjustment, setShowAdjustment] = useState(false);
+  const [form, setForm] = useState({ productId: '', operation: 'add', quantity: '1', reason: 'Purchase received', notes: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+
+  const load = async () => {
+    try {
+      const [productResult, movementResult] = await Promise.all([
+        window.inventoryAPI.listProducts(),
+        window.inventoryAPI.listStockMovements({ type: movementType, from: fromDate, to: toDate })
+      ]);
+      if (productResult?.ok) setProducts(productResult.products || []);
+      else setError(productResult?.error || 'Unable to load products.');
+      if (movementResult?.ok) setMovements(movementResult.movements || []);
+      else setError(movementResult?.error || 'Unable to load stock history.');
+    } catch (e) {
+      setError('Stock data could not be loaded from the local database.');
+    }
+  };
+
+  useEffect(() => { load(); }, [movementType, fromDate, toDate]);
+
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const money = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(value || 0));
+  const totalUnits = products.reduce((sum, product) => sum + Number(product.stock_quantity || 0), 0);
+  const stockValue = products.reduce((sum, product) => sum + Number(product.buying_price || 0) * Number(product.stock_quantity || 0), 0);
+  const lowStock = products.filter(product => Number(product.stock_quantity || 0) > 0 && Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold ?? 5)).length;
+  const outOfStock = products.filter(product => Number(product.stock_quantity || 0) <= 0).length;
+  const filteredProducts = products.filter(product => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || [product.name, product.category, product.sku, product.barcode].some(value => String(value || '').toLowerCase().includes(query));
+    const quantity = Number(product.stock_quantity || 0);
+    const matchesStock = stockFilter === 'All' || (stockFilter === 'Low stock' && quantity > 0 && quantity <= Number(product.low_stock_threshold ?? 5)) || (stockFilter === 'Out of stock' && quantity <= 0) || (stockFilter === 'In stock' && quantity > Number(product.low_stock_threshold ?? 5));
+    return matchesSearch && matchesStock;
+  });
+
+  const submitAdjustment = async event => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    if (!form.productId) return setError('Choose a product first.');
+    const quantity = Number(form.quantity);
+    if (!Number.isInteger(quantity) || quantity < 0 || (form.operation !== 'set' && quantity < 1)) return setError('Enter a valid whole-number quantity.');
+    setBusy(true);
+    try {
+      const result = await window.inventoryAPI.adjustStock({
+        productId: Number(form.productId),
+        operation: form.operation,
+        quantity,
+        reason: form.reason,
+        notes: form.notes
+      });
+      if (!result?.ok) setError(result?.error || 'Stock adjustment failed.');
+      else {
+        setMessage('Stock updated for ' + result.name + ': ' + result.previous + ' → ' + result.next + ' units.');
+        setForm({ productId: '', operation: 'add', quantity: '1', reason: 'Purchase received', notes: '' });
+        setShowAdjustment(false);
+        await load();
+      }
+    } catch (e) {
+      setError('The stock adjustment could not be saved.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className="stock-page">
+    <section className="stock-summary">
+      <div><span>Total units on hand</span><strong>{money(totalUnits)}</strong><small>Across all saved products</small></div>
+      <div><span>Inventory value</span><strong>{currency} {money(stockValue)}</strong><small>Based on buying prices</small></div>
+      <div><span>Low stock</span><strong>{money(lowStock)}</strong><small>At or below threshold</small></div>
+      <div><span>Out of stock</span><strong>{money(outOfStock)}</strong><small>Zero units available</small></div>
+    </section>
+    <div className="stock-toolbar">
+      <div><h2>Stock on hand</h2><p>Manage quantities and track every change to your inventory.</p></div>
+      <button className="btn primary" onClick={() => { setShowAdjustment(value => !value); setError(''); setMessage(''); }}>↕ Adjust stock</button>
+    </div>
+    {message && <div className="product-message">{message}</div>}
+    {error && <div className="form-error product-error">{error}</div>}
+    {showAdjustment && <form className="panel stock-adjust-form" onSubmit={submitAdjustment}>
+      <div className="panel-head"><div><h2>Stock adjustment</h2><p>Every adjustment updates the product quantity and creates a permanent movement record.</p></div><button type="button" className="icon-close" onClick={() => setShowAdjustment(false)}>×</button></div>
+      <div className="stock-adjust-fields">
+        <label>Product *<select required value={form.productId} onChange={event=>update('productId',event.target.value)}><option value="">Select a product</option>{products.map(product=><option key={product.id} value={product.id}>{product.name} · current: {product.stock_quantity}</option>)}</select></label>
+        <label>Adjustment type *<select value={form.operation} onChange={event=>update('operation',event.target.value)}><option value="add">Add stock</option><option value="remove">Remove stock</option><option value="set">Set exact quantity</option></select></label>
+        <label>{form.operation === 'set' ? 'New total quantity *' : 'Quantity *'}<input type="number" required min={form.operation === 'set' ? 0 : 1} step="1" value={form.quantity} onChange={event=>update('quantity',event.target.value)} /></label>
+        <label>Reason *<select required value={form.reason} onChange={event=>update('reason',event.target.value)}>{['Purchase received','Sale / issued','Damaged goods','Lost / missing','Returned by customer','Returned to supplier','Stock count correction','Opening stock','Other'].map(reason=><option key={reason}>{reason}</option>)}</select></label>
+        <label className="stock-notes-field">Notes (optional)<input value={form.notes} onChange={event=>update('notes',event.target.value)} placeholder="Reference, explanation, or batch details" maxLength="500" /></label>
+      </div>
+      <div className="stock-adjust-hint">Stock cannot be reduced below zero. Use “Set exact quantity” to reconcile a physical stock count.</div>
+      <div className="product-form-actions"><button type="button" className="btn ghost" onClick={() => setShowAdjustment(false)}>Cancel</button><button className="btn primary" disabled={busy || products.length===0}>{busy ? 'Saving…' : 'Save adjustment'}</button></div>
+    </form>}
+    <section className="panel stock-table-panel">
+      <div className="panel-head"><div><h2>Current stock</h2><p>{filteredProducts.length} of {products.length} products</p></div></div>
+      <div className="stock-filters"><div className="product-search"><span>⌕</span><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search product, SKU, barcode..." /></div><select value={stockFilter} onChange={event=>setStockFilter(event.target.value)}><option>All</option><option>In stock</option><option>Low stock</option><option>Out of stock</option></select></div>
+      {filteredProducts.length ? <div className="table-wrap"><table className="product-table stock-table"><thead><tr><th>Product</th><th>SKU / Barcode</th><th>Category</th><th>Buying price</th><th>On hand</th><th>Low-stock level</th><th>Stock value</th><th>Status</th><th></th></tr></thead><tbody>
+        {filteredProducts.map(product => {
+          const quantity = Number(product.stock_quantity || 0);
+          const threshold = Number(product.low_stock_threshold ?? 5);
+          const status = quantity <= 0 ? 'Out of stock' : quantity <= threshold ? 'Low stock' : 'In stock';
+          return <tr key={product.id}><td><strong>{product.name}</strong></td><td><small>{product.sku || product.barcode || '—'}</small></td><td>{product.category || '—'}</td><td>{currency} {money(product.buying_price)}</td><td><b>{money(quantity)}</b></td><td>{money(threshold)}</td><td>{currency} {money(quantity * Number(product.buying_price || 0))}</td><td><span className={'stock-badge ' + (status === 'In stock' ? 'ok' : 'low')}>{status}</span></td><td><button className="stock-adjust-row" onClick={() => { setForm({ productId:String(product.id), operation:'add', quantity:'1', reason:'Purchase received', notes:'' }); setShowAdjustment(true); setError(''); setMessage(''); }}>Adjust</button></td></tr>;
+        })}
+      </tbody></table></div> : <div className="products-empty"><div>↕</div><h3>{products.length ? 'No matching stock records' : 'No products to track yet'}</h3><p>{products.length ? 'Try changing your search or stock filter.' : 'Add products first, then manage their stock here.'}</p></div>}
+    </section>
+    <section className="panel stock-history-panel">
+      <div className="panel-head"><div><h2>Stock movement history</h2><p>Latest 500 saved adjustments, newest first</p></div><span className="period">{movements.length} records</span></div>
+      <div className="stock-history-filters">
+        <label>From<input type="date" value={fromDate} onChange={event=>setFromDate(event.target.value)} /></label>
+        <label>To<input type="date" value={toDate} onChange={event=>setToDate(event.target.value)} /></label>
+        <label>Movement<select value={movementType} onChange={event=>setMovementType(event.target.value)}><option>All</option><option value="addition">Addition</option><option value="removal">Removal</option><option value="correction">Correction</option></select></label>
+      </div>
+      {movements.length ? <div className="table-wrap"><table className="product-table stock-history-table"><thead><tr><th>Date & time</th><th>Product</th><th>Movement</th><th>Change</th><th>Before</th><th>After</th><th>Reason</th><th>Notes</th></tr></thead><tbody>
+        {movements.map(item=><tr key={item.id}><td>{item.created_at}</td><td><strong>{item.product_name}</strong></td><td><span className={'stock-badge ' + (item.quantity_change > 0 ? 'ok' : 'low')}>{item.movement_type}</span></td><td><b className={item.quantity_change > 0 ? 'stock-change-positive' : 'stock-change-negative'}>{item.quantity_change > 0 ? '+' : ''}{item.quantity_change}</b></td><td>{item.previous_quantity}</td><td>{item.new_quantity}</td><td>{item.reason}</td><td><small>{item.notes || '—'}</small></td></tr>)}
+      </tbody></table></div> : <div className="products-empty stock-history-empty"><div>↕</div><h3>No stock movements recorded</h3><p>Adjust a product's stock to create the first history record. Existing stock is kept as-is.</p></div>}
+    </section>
+  </div>;
+}
+
 function Dashboard({ username, businessName, onLogout }) {
   const [active, setActive] = useState('Overview');
   const [summary, setSummary] = useState({
@@ -303,7 +429,7 @@ function Dashboard({ username, businessName, onLogout }) {
     </aside>
     <main className="dash-main">
       <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (businessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Overview' ? <>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Overview' ? <>
         {summaryError && <div className="form-error">{summaryError}</div>}
         <section className="stat-grid">
           <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
