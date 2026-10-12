@@ -313,7 +313,15 @@ app.whenReady().then(() => {
         Number(data.buyingPrice) || 0, Number(data.sellingPrice) || 0,
         Math.max(0, Math.floor(Number(data.stock) || 0)), Math.max(0, Math.floor(Number(data.lowStock) || 0))
       ];
-      const result = db.prepare('INSERT INTO products (name, category, sku, barcode, buying_price, selling_price, stock_quantity, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(...values);
+      const create = db.transaction(() => {
+        const result = db.prepare('INSERT INTO products (name, category, sku, barcode, buying_price, selling_price, stock_quantity, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(...values);
+        if (values[6] > 0) {
+          db.prepare("INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, 'addition', ?, 0, ?, 'Opening stock', 'Initial quantity entered when product was created.')")
+            .run(result.lastInsertRowid, name, values[6], values[6]);
+        }
+        return result;
+      });
+      const result = create();
       return { ok: true, id: result.lastInsertRowid };
     } catch (error) {
       return { ok: false, error: 'Unable to add product.' };
@@ -324,12 +332,26 @@ app.whenReady().then(() => {
     try {
       const name = data?.name?.trim();
       if (!name) return { ok: false, error: 'Product name is required.' };
-      const result = db.prepare('UPDATE products SET name=?, category=?, sku=?, barcode=?, buying_price=?, selling_price=?, stock_quantity=?, low_stock_threshold=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(
-        name, data.category?.trim() || '', data.sku?.trim() || '', data.barcode?.trim() || '',
-        Number(data.buyingPrice) || 0, Number(data.sellingPrice) || 0,
-        Math.max(0, Math.floor(Number(data.stock) || 0)), Math.max(0, Math.floor(Number(data.lowStock) || 0)), id
-      );
-      return result.changes ? { ok: true } : { ok: false, error: 'Product not found.' };
+      const nextQuantity = Math.max(0, Math.floor(Number(data.stock) || 0));
+      const update = db.transaction(() => {
+        const existing = db.prepare('SELECT id, name, stock_quantity FROM products WHERE id=?').get(id);
+        if (!existing) return false;
+        const previous = Number(existing.stock_quantity || 0);
+        db.prepare('UPDATE products SET name=?, category=?, sku=?, barcode=?, buying_price=?, selling_price=?, stock_quantity=?, low_stock_threshold=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(
+          name, data.category?.trim() || '', data.sku?.trim() || '', data.barcode?.trim() || '',
+          Number(data.buyingPrice) || 0, Number(data.sellingPrice) || 0,
+          nextQuantity, Math.max(0, Math.floor(Number(data.lowStock) || 0)), id
+        );
+        if (previous !== nextQuantity) {
+          const change = nextQuantity - previous;
+          db.prepare('INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+            Number(id), name, change > 0 ? 'addition' : 'removal', change, previous, nextQuantity,
+            'Product details edited', 'Stock quantity changed from the Products section.'
+          );
+        }
+        return true;
+      });
+      return update() ? { ok: true } : { ok: false, error: 'Product not found.' };
     } catch (error) {
       return { ok: false, error: 'Unable to update product.' };
     }
@@ -337,8 +359,18 @@ app.whenReady().then(() => {
 
   ipcMain.handle('products:delete', (_event, id) => {
     try {
-      const result = db.prepare('DELETE FROM products WHERE id=?').run(id);
-      return result.changes ? { ok: true } : { ok: false, error: 'Product not found.' };
+      const remove = db.transaction(() => {
+        const product = db.prepare('SELECT id, name, stock_quantity FROM products WHERE id=?').get(id);
+        if (!product) return false;
+        const quantity = Number(product.stock_quantity || 0);
+        if (quantity > 0) {
+          db.prepare("INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, 'removal', ?, ?, 0, 'Product deleted', 'Remaining stock recorded when the product was removed from the product list.')")
+            .run(product.id, product.name, -quantity, quantity);
+        }
+        db.prepare('DELETE FROM products WHERE id=?').run(id);
+        return true;
+      });
+      return remove() ? { ok: true } : { ok: false, error: 'Product not found.' };
     } catch (error) {
       return { ok: false, error: 'Unable to delete product.' };
     }
