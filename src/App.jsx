@@ -254,7 +254,45 @@ function Products({ currency = 'PKR' }) {
 
 function Dashboard({ username, businessName, onLogout }) {
   const [active, setActive] = useState('Overview');
-  const currency = 'PKR';
+  const [summary, setSummary] = useState({
+    currency: 'PKR',
+    totalProducts: 0,
+    stockValue: 0,
+    potentialMargin: 0,
+    lowStockCount: 0,
+    lowStockProducts: [],
+    categories: [],
+    recentProducts: []
+  });
+  const [summaryError, setSummaryError] = useState('');
+
+  useEffect(() => {
+    if (active !== 'Overview' || !window.inventoryAPI?.getDashboardSummary) return undefined;
+    let mounted = true;
+    const loadSummary = async () => {
+      try {
+        const result = await window.inventoryAPI.getDashboardSummary();
+        if (mounted && result?.ok) {
+          setSummary(result);
+          setSummaryError('');
+        } else if (mounted) {
+          setSummaryError('Dashboard data could not be loaded from the local database.');
+        }
+      } catch (error) {
+        if (mounted) setSummaryError('Dashboard data could not be loaded from the local database.');
+      }
+    };
+    loadSummary();
+    const refreshId = setInterval(loadSummary, 10000);
+    return () => {
+      mounted = false;
+      clearInterval(refreshId);
+    };
+  }, [active]);
+
+  const money = (value) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(value || 0));
+  const currency = summary.currency || 'PKR';
+  const maxCategoryProducts = Math.max(1, ...summary.categories.map(item => Number(item.products || 0)));
 
   return <div className="dashboard">
     <aside className="sidebar">
@@ -264,8 +302,32 @@ function Dashboard({ username, businessName, onLogout }) {
       <div className="sidebar-bottom"><button className="nav-item"><span>⚙</span>Settings</button><button className="nav-item logout" onClick={onLogout}><span>↪</span>Sign out</button></div>
     </aside>
     <main className="dash-main">
-      <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'OVERVIEW' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? businessName || 'Your business' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Overview' ? <><section className="stat-grid"><Stat label="Total Products" value="0" note="Products module coming next" icon="▦"/><Stat label="Stock Value" value="₨ 0" note="Stock module coming next" icon="◈"/><Stat label="Today Sales" value="₨ 0" note="Sales module coming next" icon="↗"/><Stat label="Low Stock" value="0" note="Stock alerts coming next" icon="!"/></section><section className="dash-grid"><div className="panel large-panel"><div className="panel-head"><div><h2>Sales overview</h2><p>Analytics will use real local data later.</p></div><span className="period">Coming later</span></div><div className="empty-chart"><div className="chart-line"></div><span>No business transactions recorded yet</span></div></div><div className="panel"><div className="panel-head"><div><h2>Module roadmap</h2><p>Development order</p></div></div><div className="quick-list">{NAV.slice(1).map(([name])=><button key={name} onClick={()=>setActive(name)}>{name}<span>→</span></button>)}</div></div></section></> : <div className="panel section-placeholder"><div className="placeholder-icon">⌁</div><h2>{active}</h2><p>The navigation section is in place. Its database tables and features will be implemented separately.</p></div>}
+      <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (businessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Overview' ? <>
+        {summaryError && <div className="form-error">{summaryError}</div>}
+        <section className="stat-grid">
+          <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
+          <Stat label="Stock Value" value={currency + ' ' + money(summary.stockValue)} note="Current quantity × buying price" icon="◈"/>
+          <Stat label="Potential Stock Margin" value={currency + ' ' + money(summary.potentialMargin)} note="If current stock sells at listed prices" icon="↗"/>
+          <Stat label="Low Stock Items" value={money(summary.lowStockCount)} note="At or below each product's threshold" icon="!"/>
+        </section>
+        <section className="dash-grid overview-grid">
+          <div className="panel large-panel">
+            <div className="panel-head"><div><h2>Inventory by category</h2><p>Based on products currently saved in StockDesk</p></div><span className="period">Live data</span></div>
+            {summary.categories.length ? <div className="category-chart">{summary.categories.map(item=><div className="category-row" key={item.name}><div className="category-label"><span>{item.name}</span><b>{item.products} product{Number(item.products)===1?'':'s'}</b></div><div className="category-track"><div className="category-fill" style={{width: (Number(item.products || 0) / maxCategoryProducts * 100) + '%'}} /></div><small>{money(item.units)} units</small></div>)}</div> : <div className="overview-empty"><div>▦</div><h3>No inventory data yet</h3><p>Add products to see your inventory summary here.</p><button className="btn primary" onClick={()=>setActive('Products')}>Add products</button></div>}
+          </div>
+          <div className="panel">
+            <div className="panel-head"><div><h2>Low stock alerts</h2><p>Products that need attention</p></div><span className="alert-count">{summary.lowStockCount}</span></div>
+            {summary.lowStockProducts.length ? <div className="overview-list">{summary.lowStockProducts.map(product=><div className="overview-list-item" key={product.id}><div><b>{product.name}</b><small>{product.category || 'Uncategorized'}</small></div><span className="stock-badge low">{money(product.stock_quantity)} left</span></div>)}</div> : <div className="overview-empty compact"><div>✓</div><h3>No low-stock alerts</h3><p>All saved products are above their thresholds.</p></div>}
+            <button className="overview-link" onClick={()=>setActive('Products')}>Manage products <span>→</span></button>
+          </div>
+        </section>
+        <section className="panel recent-panel">
+          <div className="panel-head"><div><h2>Recently updated products</h2><p>Latest inventory records from your local database</p></div><button className="overview-link" onClick={()=>setActive('Products')}>View products →</button></div>
+          {summary.recentProducts.length ? <div className="recent-product-list">{summary.recentProducts.map(product=><div className="recent-product-row" key={product.id}><div className="recent-product-icon">▦</div><div className="recent-product-name"><b>{product.name}</b><small>{product.category || 'Uncategorized'}</small></div><div className="recent-product-stock"><b>{money(product.stock_quantity)}</b><small>units in stock</small></div><span className={Number(product.stock_quantity) <= 0 ? 'stock-badge low' : 'stock-badge ok'}>{Number(product.stock_quantity) <= 0 ? 'Out of stock' : 'Recorded'}</span></div>)}</div> : <div className="recent-empty">Product activity will appear here after you add products.</div>}
+        </section>
+        <p className="dashboard-data-note">Sales, purchases, and realized profit will appear here after those transaction modules are implemented. This dashboard currently reports saved inventory data only.</p>
+      </> : <div className="panel section-placeholder"><div className="placeholder-icon">⌁</div><h2>{active}</h2><p>The navigation section is in place. Its database tables and features will be implemented separately.</p></div>}
     </main>
   </div>;
 }
