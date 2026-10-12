@@ -191,6 +191,39 @@ app.whenReady().then(() => {
     return { ok: true, username: user.username, businessName: business?.business_name || '' };
   });
   
+  ipcMain.handle('dashboard:summary', () => {
+    const products = db.prepare('SELECT id, name, category, buying_price, selling_price, stock_quantity, low_stock_threshold, created_at, updated_at FROM products').all();
+    const business = db.prepare('SELECT currency FROM business WHERE id = 1').get();
+    const totalProducts = products.length;
+    const stockValue = products.reduce((sum, product) => sum + Number(product.buying_price || 0) * Number(product.stock_quantity || 0), 0);
+    const potentialMargin = products.reduce((sum, product) => sum + (Number(product.selling_price || 0) - Number(product.buying_price || 0)) * Number(product.stock_quantity || 0), 0);
+    const lowStockProducts = products
+      .filter(product => Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold ?? 5))
+      .sort((a, b) => Number(a.stock_quantity || 0) - Number(b.stock_quantity || 0))
+      .slice(0, 6);
+    const categories = db.prepare(`
+      SELECT CASE WHEN TRIM(category) = '' THEN 'Uncategorized' ELSE category END AS name,
+             COUNT(*) AS products,
+             SUM(stock_quantity) AS units
+      FROM products
+      GROUP BY CASE WHEN TRIM(category) = '' THEN 'Uncategorized' ELSE category END
+      ORDER BY products DESC, name COLLATE NOCASE ASC
+      LIMIT 6
+    `).all();
+    const recentProducts = db.prepare('SELECT id, name, category, stock_quantity, updated_at FROM products ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 5').all();
+    return {
+      ok: true,
+      currency: business?.currency || 'PKR',
+      totalProducts,
+      stockValue,
+      potentialMargin,
+      lowStockCount: products.filter(product => Number(product.stock_quantity || 0) <= Number(product.low_stock_threshold ?? 5)).length,
+      lowStockProducts,
+      categories,
+      recentProducts
+    };
+  });
+
   ipcMain.handle('products:list', () => ({
     ok: true,
     products: db.prepare('SELECT * FROM products ORDER BY name COLLATE NOCASE ASC, id DESC').all()
