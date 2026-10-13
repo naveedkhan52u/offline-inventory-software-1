@@ -457,6 +457,31 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.handle('billing:print', async (_event, data = {}) => {
+    const html = String(data?.html || '');
+    if (!html || html.length > 500000) return { ok: false, error: 'The bill content is empty or too large.' };
+    let printWindow;
+    try {
+      printWindow = new BrowserWindow({
+        show: false,
+        width: 420,
+        height: 720,
+        autoHideMenuBar: true,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
+      });
+      await printWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+      return await new Promise(resolve => {
+        printWindow.webContents.print({ silent: true, printBackground: true }, (success, failureReason) => {
+          if (printWindow && !printWindow.isDestroyed()) printWindow.close();
+          resolve(success ? { ok: true } : { ok: false, error: failureReason || 'The default printer could not print this bill.' });
+        });
+      });
+    } catch (error) {
+      if (printWindow && !printWindow.isDestroyed()) printWindow.close();
+      return { ok: false, error: error.message || 'Unable to send bill to the default printer.' };
+    }
+  });
+
   ipcMain.handle('sales:list', (_event, filters = {}) => {
     try {
       const conditions = [];
