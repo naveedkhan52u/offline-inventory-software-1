@@ -136,7 +136,7 @@ function Auth({ mode, setMode, onSuccess }) {
 }
 
 const NAV = [
-  ['Overview','⌂'], ['Products','▦'], ['Stock','↕'], ['Purchases','＋'], ['Sales','₨'],
+  ['Overview','⌂'], ['Products','▦'], ['Stock','↕'], ['Purchases','＋'], ['Sales','₨'], ['Billing','▣'],
   ['Profit & Loss','◒'], ['Staff','♙'], ['Dashboard Analytics','◫'], ['Reports','▤'],
   ['Backup & Restore','↥'], ['Barcode/QR','▥'], ['Installation','⌘']
 ];
@@ -249,6 +249,63 @@ function Products({ currency = 'PKR' }) {
         {filtered.map(p => { const profit=Number(p.selling_price||0)-Number(p.buying_price||0); const low=Number(p.stock_quantity||0)<=Number(p.low_stock_threshold||0); return <tr key={p.id}><td><strong>{p.name}</strong></td><td>{p.category || '—'}</td><td><small>{p.sku || p.barcode || '—'}</small></td><td>{currency} {money(p.buying_price)}</td><td>{currency} {money(p.selling_price)}</td><td><b>{p.stock_quantity}</b></td><td>{currency} {money(profit)}</td><td><span className={low?'stock-badge low':'stock-badge ok'}>{low?'Low stock':'In stock'}</span></td><td><div className="row-actions"><button onClick={()=>edit(p)}>Edit</button><button className="danger" onClick={()=>remove(p)}>Delete</button></div></td></tr> })}
       </tbody></table></div> : <div className="products-empty"><div>▦</div><h3>{products.length ? 'No matching products' : 'No products yet'}</h3><p>{products.length ? 'Try another search or category.' : 'Add your first product to start building your inventory.'}</p>{!products.length && <button className="btn primary" onClick={()=>setShowForm(true)}>Add your first product</button>}</div>}
     </div>
+  </div>;
+}
+
+function Billing({ currency = 'PKR', businessName = '' }) {
+  const [products, setProducts] = useState([]);
+  const [search, setSearch] = useState('');
+  const [items, setItems] = useState([]);
+  const [billDate, setBillDate] = useState(new Date().toISOString().slice(0,10));
+  const [printAfterSave, setPrintAfterSave] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [lastBill, setLastBill] = useState(null);
+  const money = value => new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(Number(value||0));
+  const loadProducts = async () => { const r = await window.inventoryAPI.listProducts(); if (r?.ok) setProducts(r.products||[]); else setError(r?.error||'Unable to load products.'); };
+  useEffect(() => { loadProducts(); }, []);
+  const filtered = products.filter(p => String(p.name||'').toLowerCase().includes(search.trim().toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.trim().toLowerCase()) || String(p.barcode||'').toLowerCase().includes(search.trim().toLowerCase()));
+  const addProduct = product => { setError(''); setMessage(''); setItems(current => { const found=current.find(x=>Number(x.productId)===Number(product.id)); if(found) return current.map(x=>Number(x.productId)===Number(product.id)?{...x,quantity:String(Number(x.quantity||0)+1)}:x); return [...current,{productId:product.id,name:product.name,quantity:'1',unitPrice:String(product.selling_price??0),available:Number(product.stock_quantity||0)}]; }); setSearch(''); };
+  const updateItem = (id,key,value) => setItems(current=>current.map(x=>Number(x.productId)===Number(id)?{...x,[key]:value}:x));
+  const removeItem = id => setItems(current=>current.filter(x=>Number(x.productId)!==Number(id)));
+  const total = items.reduce((sum,x)=>sum+Math.max(0,Number(x.quantity)||0)*Math.max(0,Number(x.unitPrice)||0),0);
+  const buildReceipt = sale => {
+    const esc = value => String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{font:12px Arial,sans-serif;color:#111;width:100%;margin:0}h1{font-size:18px;text-align:center;margin:0 0 5px;overflow-wrap:anywhere}p{margin:4px 0}hr{border:0;border-top:1px dashed #777;margin:9px 0}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px 1px;border-bottom:1px dotted #bbb;vertical-align:top;font-size:11px}th:last-child,td:last-child{text-align:right}.total{font-size:16px;font-weight:bold;text-align:right;margin-top:10px}.center{text-align:center}.small{font-size:10px}</style></head><body><h1>${esc(businessName||'Shop')}</h1><p class="center">Bill: ${esc(sale.saleNumber)}</p><p>Date: ${esc(billDate)}</p><hr><table><thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead><tbody>${items.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.quantity)}</td><td>${esc(money(x.unitPrice))}</td><td>${esc(money(Number(x.quantity)*Number(x.unitPrice)))}</td></tr>`).join('')}</tbody></table><hr><div class="total">Total: ${esc(currency)} ${esc(money(total))}</div><hr><p class="center small">Thank you for shopping with us.</p></body></html>`;
+  };
+  const saveBill = async event => {
+    event.preventDefault(); setError(''); setMessage('');
+    if(!items.length) return setError('Add at least one product to the bill.');
+    if(items.some(x=>!Number.isInteger(Number(x.quantity))||Number(x.quantity)<1||!Number.isFinite(Number(x.unitPrice))||Number(x.unitPrice)<0)) return setError('Enter a valid quantity and amount for every product.');
+    for(const x of items){const current=products.find(p=>Number(p.id)===Number(x.productId));if(!current)return setError('A selected product no longer exists.');if(Number(x.quantity)>Number(current.stock_quantity||0))return setError('Not enough stock for '+x.name+'. Available: '+Number(current.stock_quantity||0)+'.');}
+    setBusy(true);
+    try{
+      const result=await window.inventoryAPI.createSale({customerName:'Walk-in customer',customerPhone:'',saleDate:billDate,discount:0,paidAmount:Math.round((total+Number.EPSILON)*100)/100,paymentMethod:'Cash',notes:'Generated from Billing section',items:items.map(x=>({productId:Number(x.productId),quantity:Number(x.quantity),unitPrice:Number(x.unitPrice)}))});
+      if(!result?.ok){setError(result?.error||'Unable to save bill.');return;}
+      const saved={saleNumber:result.saleNumber,saleDate:billDate,items:items.map(x=>({...x})),total};
+      setLastBill(saved);setMessage('Bill '+result.saleNumber+' saved. Inventory, sales, analytics and reports have been updated.');setItems([]);await loadProducts();
+      if(printAfterSave){const printed=await window.inventoryAPI.printBill({html:buildReceipt(saved)});if(!printed?.ok)setError('Bill saved, but automatic printing failed: '+(printed?.error||'Check the printer and try Print last bill.'));else setMessage('Bill '+result.saleNumber+' saved and sent to the default printer.');}
+    }catch(e){setError('The bill could not be saved or printed.');}
+    finally{setBusy(false);}
+  };
+  return <div className="billing-page">
+    <div className="sales-toolbar"><div><h2>Create bill</h2><p>Admin-only billing. Saved bills also become sales and reduce stock automatically.</p></div><label className="billing-print-toggle"><input type="checkbox" checked={printAfterSave} onChange={e=>setPrintAfterSave(e.target.checked)}/> Print automatically after saving</label></div>
+    {message&&<div className="product-message">{message}</div>}{error&&<div className="form-error product-error">{error}</div>}
+    <form onSubmit={saveBill}>
+      <section className="panel billing-paper">
+        <header className="billing-shop-header"><div><div className="eyebrow">OFFICIAL BILL</div><h2>{businessName||'Your Shop'}</h2><p>Billing and sales receipt</p></div><label>Bill date<input type="date" required value={billDate} onChange={e=>setBillDate(e.target.value)}/></label></header>
+        <div className="billing-product-picker"><label className="billing-search-label">Find products<input autoComplete="off" value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();if(filtered.length===1)addProduct(filtered[0]);}}} placeholder="Type product name, SKU or barcode, then press Enter"/></label>
+          {search.trim()&&<div className="billing-search-results">{filtered.length?filtered.map(p=><button type="button" key={p.id} onClick={()=>addProduct(p)}><span>{p.name}</span><small>{currency} {money(p.selling_price)} · Stock {p.stock_quantity}</small></button>):<div className="billing-no-results">No matching products found.</div>}</div>}
+        </div>
+        <div className="billing-lines-heading"><h3>Bill items</h3><span>{items.length} product lines</span></div>
+        <div className="table-wrap"><table className="product-table billing-items-table"><thead><tr><th>Product name</th><th>Quantity</th><th>Price per unit</th><th>Amount</th><th></th></tr></thead><tbody>{items.map(item=><tr key={item.productId}><td><strong>{item.name}</strong><small className="purchase-subline">Available stock: {products.find(p=>Number(p.id)===Number(item.productId))?.stock_quantity??item.available}</small></td><td><input aria-label={'Quantity for '+item.name} className="billing-qty-input" type="number" min="1" step="1" required value={item.quantity} onChange={e=>updateItem(item.productId,'quantity',e.target.value)}/></td><td><input aria-label={'Price for '+item.name} className="billing-price-input" type="number" min="0" step="0.01" required value={item.unitPrice} onChange={e=>updateItem(item.productId,'unitPrice',e.target.value)}/></td><td><strong>{currency} {money(Number(item.quantity)*Number(item.unitPrice))}</strong></td><td><button type="button" className="purchase-remove-line" onClick={()=>removeItem(item.productId)} title="Remove product">×</button></td></tr>)}</tbody></table></div>
+        {!items.length&&<div className="billing-empty"><span>▣</span><h3>Your bill is empty</h3><p>Search for a product above and select it to add it to this bill.</p></div>}
+        <footer className="billing-footer"><div className="billing-total"><span>Total amount</span><strong>{currency} {money(total)}</strong></div><button type="submit" className="btn primary billing-save-button" disabled={busy||!items.length}>{busy?'Saving bill…':'Save bill'+(printAfterSave?' & Print':'')}</button></footer>
+      </section>
+    </form>
+    {lastBill&&<section className="panel billing-last-bill"><div><h3>Last saved bill</h3><p>{lastBill.saleNumber} · {lastBill.saleDate} · {currency} {money(lastBill.total)}</p></div><button type="button" className="btn ghost" onClick={async()=>{const r=await window.inventoryAPI.printBill({html:buildReceipt(lastBill)});if(!r?.ok)setError(r?.error||'Unable to print bill.');else setMessage('Bill sent to the default printer.');}}>Print last bill</button></section>}
+    <p className="sales-footnote">Bills are saved as completed cash sales so the product quantities, Sales, Overview, Dashboard Analytics, Profit & Loss, and Reports stay consistent. Check stock before saving; all billing transactions are stored locally.</p>
   </div>;
 }
 
@@ -909,7 +966,7 @@ function Dashboard({ username, businessName, onLogout }) {
     </aside>
     <main className="dash-main">
       <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (businessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Profit & Loss' ? <ProfitLoss currency={currency} /> : active === 'Staff' ? <Staff currency={currency} /> : active === 'Dashboard Analytics' ? <DashboardAnalytics currency={currency} /> : active === 'Reports' ? <Reports currency={currency} /> : active === 'Overview' ? <>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Billing' ? <Billing currency={currency} businessName={businessName} /> : active === 'Profit & Loss' ? <ProfitLoss currency={currency} /> : active === 'Staff' ? <Staff currency={currency} /> : active === 'Dashboard Analytics' ? <DashboardAnalytics currency={currency} /> : active === 'Reports' ? <Reports currency={currency} /> : active === 'Overview' ? <>
         {summaryError && <div className="form-error">{summaryError}</div>}
         <section className="stat-grid">
           <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
