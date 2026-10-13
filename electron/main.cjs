@@ -150,6 +150,9 @@ function createDatabase() {
 
   // Keep the database compatible with the earlier prototype schema.
   const columns = db.prepare('PRAGMA table_info(users)').all().map(column => column.name);
+  if (!db.prepare('PRAGMA table_info(staff_payments)').all().some(column => column.name === 'payment_type')) {
+    db.exec("ALTER TABLE staff_payments ADD COLUMN payment_type TEXT NOT NULL DEFAULT 'Salary'");
+  }
   if (!columns.includes('password_salt')) db.exec('ALTER TABLE users ADD COLUMN password_salt TEXT NOT NULL DEFAULT ""');
   if (!columns.includes('password_keylen')) db.exec('ALTER TABLE users ADD COLUMN password_keylen INTEGER NOT NULL DEFAULT 64');
   if (!columns.includes('password_cost')) db.exec('ALTER TABLE users ADD COLUMN password_cost INTEGER NOT NULL DEFAULT 16384');
@@ -565,13 +568,15 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('staff:payment:create', (_event,d) => {
     const id=Number(d?.staffId), date=String(d?.paymentDate||'').trim(), amount=Number(d?.amount);
-    const method=String(d?.paymentMethod||'Cash'), period=String(d?.periodLabel||'').trim(), notes=String(d?.notes||'').trim();
+    const method=String(d?.paymentMethod||'Cash'), period=String(d?.periodLabel||'').trim(), notes=String(d?.notes||'').trim(), paymentType=String(d?.paymentType||'Salary');
     if(!Number.isInteger(id)||id<1)return {ok:false,error:'Choose a staff member.'};
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(Date.parse(date+'T00:00:00')))return {ok:false,error:'Choose a valid payment date.'};
     if(!Number.isFinite(amount)||amount<=0)return {ok:false,error:'Salary payment must be greater than zero.'};
     if(!['Cash','Bank transfer','Mobile wallet','Cheque','Other'].includes(method))return {ok:false,error:'Choose a valid payment method.'};
+    if(!['Salary','Advance'].includes(paymentType))return {ok:false,error:'Choose Salary or Advance payment type.'};
+    if(!/^\\d{4}-\\d{2}$/.test(period))return {ok:false,error:'Choose the salary month this payment belongs to.'};
     try { const s=db.prepare('SELECT id,full_name FROM staff WHERE id=?').get(id); if(!s)return {ok:false,error:'Staff member not found.'};
-      db.prepare('INSERT INTO staff_payments(staff_id,staff_name,payment_date,amount,payment_method,period_label,notes) VALUES(?,?,?,?,?,?,?)').run(s.id,s.full_name,date,amount,method,period,notes); return {ok:true};
+      db.prepare('INSERT INTO staff_payments(staff_id,staff_name,payment_date,amount,payment_method,period_label,notes,payment_type) VALUES(?,?,?,?,?,?,?,?)').run(s.id,s.full_name,date,amount,method,period,notes,paymentType); return {ok:true};
     } catch(e) { return {ok:false,error:'Unable to save salary payment.'}; }
   });
   ipcMain.handle('expenses:list', (_event,f={}) => {
