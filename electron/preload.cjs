@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('inventoryAPI', {
   createAccount: (data) => ipcRenderer.invoke('auth:create', data),
   login: (data) => ipcRenderer.invoke('auth:login', data),
   getDashboardSummary: () => ipcRenderer.invoke('dashboard:summary'),
+  getAnalyticsOverview: (options) => ipcRenderer.invoke('analytics:overview', options),
+  generateReports: (filters) => ipcRenderer.invoke('reports:generate', filters),
   listStaff: (filters) => ipcRenderer.invoke('staff:list', filters),
   saveStaff: (data) => ipcRenderer.invoke('staff:save', data),
   createStaffPayment: (data) => ipcRenderer.invoke('staff:payment:create', data),
