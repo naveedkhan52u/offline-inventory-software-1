@@ -398,6 +398,118 @@ function Sales({ currency = 'PKR' }) {
   </div>;
 }
 
+function ProfitLoss({ currency = 'PKR' }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(today.slice(0, 7) + '-01');
+  const [to, setTo] = useState(today);
+  const [data, setData] = useState(null);
+  const [expenses, setExpenses] = useState([]);
+  const [search, setSearch] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ expenseDate: today, category: 'Rent', description: '', amount: '', paymentMethod: 'Cash', notes: '' });
+  const money = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(value || 0));
+  const load = async () => {
+    try {
+      const [summary, list] = await Promise.all([
+        window.inventoryAPI.getProfitLossSummary({ from, to }),
+        window.inventoryAPI.listExpenses({ from, to, search })
+      ]);
+      if (summary?.ok) setData(summary); else setError(summary?.error || 'Unable to calculate report.');
+      if (list?.ok) setExpenses(list.expenses || []); else setError(list?.error || 'Unable to load expenses.');
+    } catch (e) { setError('Profit and loss data could not be loaded.'); }
+  };
+  useEffect(() => { load(); }, [from, to, search]);
+  const change = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const saveExpense = async event => {
+    event.preventDefault(); setBusy(true); setError(''); setMessage('');
+    try {
+      const result = await window.inventoryAPI.createExpense(form);
+      if (!result?.ok) setError(result?.error || 'Unable to save expense.');
+      else { setMessage('Expense saved.'); setShowForm(false); setForm({ expenseDate: today, category: 'Rent', description: '', amount: '', paymentMethod: 'Cash', notes: '' }); await load(); }
+    } catch (e) { setError('Unable to save expense.'); }
+    finally { setBusy(false); }
+  };
+  const deleteExpense = async id => {
+    if (!window.confirm('Delete this expense record? This cannot be undone.')) return;
+    const result = await window.inventoryAPI.deleteExpense(id);
+    if (result?.ok) { setMessage('Expense deleted.'); await load(); } else setError(result?.error || 'Unable to delete expense.');
+  };
+  const d = data || { currency, revenue: 0, costOfGoodsSold: 0, grossProfit: 0, businessExpenses: 0, salaryExpenses: 0, netProfit: 0, salesCount: 0 };
+  const curr = d.currency || currency;
+  const positive = Number(d.netProfit) >= 0;
+  return <div className="finance-page">
+    <div className="finance-toolbar"><div><h2>Profit &amp; Loss</h2><p>Live calculations from sales, sold product costs, operating expenses, and salary payments.</p></div><button className="btn ghost" onClick={() => window.print()}>Print report</button></div>
+    <section className="finance-filter panel"><label>From date<input type="date" max={to} value={from} onChange={e => setFrom(e.target.value)} /></label><label>To date<input type="date" min={from} max={today} value={to} onChange={e => setTo(e.target.value)} /></label><span>{from} to {to}</span></section>
+    {message && <div className="product-message">{message}</div>}{error && <div className="form-error product-error">{error}</div>}
+    <section className="finance-stat-grid">
+      <div><span>Sales revenue</span><strong>{curr} {money(d.revenue)}</strong><small>{d.salesCount} sales in selected period</small></div>
+      <div><span>Cost of goods sold</span><strong>{curr} {money(d.costOfGoodsSold)}</strong><small>Buying cost of sold products</small></div>
+      <div><span>Gross profit</span><strong>{curr} {money(d.grossProfit)}</strong><small>Revenue less sold product costs</small></div>
+      <div className={positive ? 'finance-net-positive' : 'finance-net-negative'}><span>Net profit / loss</span><strong>{curr} {money(d.netProfit)}</strong><small>{positive ? 'Net profit' : 'Net loss'} for this period</small></div>
+    </section>
+    <section className="panel finance-breakdown"><div className="panel-head"><div><h2>Profit and loss statement</h2><p>Calculated from local transaction records, not sample figures.</p></div></div>
+      <div className="finance-statement"><div><span>Sales revenue (after discounts)</span><b>{curr} {money(d.revenue)}</b></div><div><span>Less: cost of goods sold</span><b>− {curr} {money(d.costOfGoodsSold)}</b></div><div className="finance-subtotal"><span>Gross profit</span><b>{curr} {money(d.grossProfit)}</b></div><div><span>Operating expenses</span><b>− {curr} {money(d.businessExpenses)}</b></div><div><span>Staff salary payments</span><b>− {curr} {money(d.salaryExpenses)}</b></div><div className="finance-total"><span>NET {positive ? 'PROFIT' : 'LOSS'}</span><b>{curr} {money(d.netProfit)}</b></div></div>
+      <p className="finance-note">Purchases increase inventory and are not immediately counted as an expense. Product costs are counted when products sell. Salary payments count on their payment dates.</p>
+    </section>
+    <section className="panel finance-breakdown"><div className="panel-head"><div><h2>Business expenses</h2><p>Track rent, utilities, transport, repairs, and other running costs.</p></div><button className="btn primary" onClick={() => setShowForm(v => !v)}>＋ Add expense</button></div>
+      {showForm && <form className="staff-form-grid" onSubmit={saveExpense}>
+        <label>Date *<input type="date" required max={today} value={form.expenseDate} onChange={e => change('expenseDate', e.target.value)} /></label>
+        <label>Category *<select value={form.category} onChange={e => change('category', e.target.value)}>{['Rent','Utilities','Transport','Repairs','Internet & Phone','Office supplies','Marketing','Taxes & Fees','Other'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Description *<input required maxLength="180" value={form.description} onChange={e => change('description', e.target.value)} /></label>
+        <label>Amount *<input type="number" required min="0.01" step="0.01" value={form.amount} onChange={e => change('amount', e.target.value)} /></label>
+        <label>Payment method<select value={form.paymentMethod} onChange={e => change('paymentMethod', e.target.value)}>{['Cash','Bank transfer','Mobile wallet','Card','Other'].map(x => <option key={x}>{x}</option>)}</select></label>
+        <label>Notes<input maxLength="500" value={form.notes} onChange={e => change('notes', e.target.value)} /></label>
+        <div className="product-form-actions"><button type="button" className="btn ghost" onClick={() => setShowForm(false)}>Cancel</button><button className="btn primary" disabled={busy}>{busy ? 'Saving…' : 'Save expense'}</button></div>
+      </form>}
+      <div className="finance-expense-search"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search expense category or description..." /></div>
+      {expenses.length ? <div className="table-wrap"><table className="product-table finance-table"><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Method</th><th>Amount</th><th>Action</th></tr></thead><tbody>{expenses.map(x => <tr key={x.id}><td>{x.expense_date}</td><td>{x.category}</td><td><strong>{x.description}</strong><small className="purchase-subline">{x.notes || ''}</small></td><td>{x.payment_method}</td><td>{curr} {money(x.amount)}</td><td><button className="purchase-remove-line" onClick={() => deleteExpense(x.id)}>×</button></td></tr>)}</tbody></table></div> : <div className="products-empty"><div>₨</div><h3>No expenses in this period</h3><p>Add expenses to include them in net profit.</p></div>}
+    </section>
+    <p className="finance-note">This is an operational estimate, not a tax filing or formal accounting statement.</p>
+  </div>;
+}
+
+function Staff({ currency = 'PKR' }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const empty = { fullName: '', jobTitle: '', phone: '', email: '', monthlySalary: '0', hireDate: today, status: 'Active', notes: '' };
+  const [staff, setStaff] = useState([]), [payments, setPayments] = useState([]), [paidMonth, setPaidMonth] = useState(0);
+  const [form, setForm] = useState(empty), [editing, setEditing] = useState(null), [show, setShow] = useState(false), [showPay, setShowPay] = useState(false);
+  const [payForm, setPayForm] = useState({ staffId: '', paymentDate: today, amount: '', paymentMethod: 'Cash', periodLabel: today.slice(0, 7), notes: '' });
+  const [search, setSearch] = useState(''), [status, setStatus] = useState('All'), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
+  const money = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(value || 0));
+  const load = async () => {
+    try { const r = await window.inventoryAPI.listStaff({ search, status }); if (r?.ok) { setStaff(r.staff || []); setPayments(r.payments || []); setPaidMonth(Number(r.paidThisMonth?.paid || 0)); } else setError(r?.error || 'Unable to load staff.'); }
+    catch (e) { setError('Staff records could not be loaded.'); }
+  };
+  useEffect(() => { load(); }, [search, status]);
+  const change = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const changePay = (k, v) => setPayForm(p => ({ ...p, [k]: v }));
+  const edit = p => { setForm({ fullName: p.full_name, jobTitle: p.job_title || '', phone: p.phone || '', email: p.email || '', monthlySalary: String(p.monthly_salary || 0), hireDate: p.hire_date || '', status: p.status, notes: p.notes || '' }); setEditing(p.id); setShow(true); setError(''); };
+  const cancel = () => { setForm(empty); setEditing(null); setShow(false); };
+  const save = async e => { e.preventDefault(); setBusy(true); setError(''); setMessage(''); try { const r = await window.inventoryAPI.saveStaff({ ...form, id: editing, monthlySalary: Number(form.monthlySalary) }); if (!r?.ok) setError(r?.error || 'Unable to save staff.'); else { setMessage(editing ? 'Staff details updated.' : 'Staff member added.'); cancel(); await load(); } } catch (e) { setError('Unable to save staff.'); } finally { setBusy(false); } };
+  const savePay = async e => { e.preventDefault(); setBusy(true); setError(''); setMessage(''); try { const r = await window.inventoryAPI.createStaffPayment({ ...payForm, staffId: Number(payForm.staffId), amount: Number(payForm.amount) }); if (!r?.ok) setError(r?.error || 'Unable to record salary payment.'); else { setMessage('Salary payment recorded and included in Profit & Loss.'); setShowPay(false); setPayForm({ staffId: '', paymentDate: today, amount: '', paymentMethod: 'Cash', periodLabel: today.slice(0, 7), notes: '' }); await load(); } } catch (e) { setError('Unable to save salary payment.'); } finally { setBusy(false); } };
+  const active = staff.filter(p => p.status === 'Active');
+  const payroll = active.reduce((sum, p) => sum + Number(p.monthly_salary || 0), 0);
+  return <div className="staff-page">
+    <div className="finance-toolbar"><div><h2>Staff</h2><p>Manage employee details, monthly salaries, and salary payments.</p></div><div className="staff-toolbar-actions"><button className="btn ghost" onClick={() => { setShowPay(v => !v); setError(''); }}>＋ Record salary</button><button className="btn primary" onClick={() => { setForm(empty); setEditing(null); setShow(v => !v); setError(''); }}>＋ Add staff</button></div></div>
+    {message && <div className="product-message">{message}</div>}{error && <div className="form-error product-error">{error}</div>}
+    <section className="finance-stat-grid"><div><span>Active staff</span><strong>{active.length}</strong><small>Active in filtered list</small></div><div><span>Expected monthly payroll</span><strong>{currency} {money(payroll)}</strong><small>Monthly salaries of active staff</small></div><div><span>Salary paid this month</span><strong>{currency} {money(paidMonth)}</strong><small>Actual recorded payments</small></div><div><span>Recent salary payments</span><strong>{payments.length}</strong><small>Latest 300 records</small></div></section>
+    {show && <form className="panel staff-form-card" onSubmit={save}><div className="panel-head"><div><h2>{editing ? 'Edit staff member' : 'Add staff member'}</h2><p>Salary uses your business currency.</p></div><button type="button" className="icon-close" onClick={cancel}>×</button></div><div className="staff-form-grid">
+      <label>Full name *<input required maxLength="160" value={form.fullName} onChange={e => change('fullName', e.target.value)} /></label><label>Job title / role<input maxLength="120" value={form.jobTitle} onChange={e => change('jobTitle', e.target.value)} /></label><label>Phone number<input maxLength="50" value={form.phone} onChange={e => change('phone', e.target.value)} /></label><label>Email address<input type="email" maxLength="180" value={form.email} onChange={e => change('email', e.target.value)} /></label><label>Monthly salary *<input type="number" required min="0" step="0.01" value={form.monthlySalary} onChange={e => change('monthlySalary', e.target.value)} /></label><label>Joining date<input type="date" value={form.hireDate} onChange={e => change('hireDate', e.target.value)} /></label><label>Status<select value={form.status} onChange={e => change('status', e.target.value)}><option>Active</option><option>Inactive</option></select></label><label>Notes<input maxLength="1000" value={form.notes} onChange={e => change('notes', e.target.value)} /></label>
+    </div><div className="product-form-actions"><button type="button" className="btn ghost" onClick={cancel}>Cancel</button><button className="btn primary" disabled={busy}>{busy ? 'Saving…' : editing ? 'Save changes' : 'Save staff member'}</button></div></form>}
+    {showPay && <form className="panel staff-form-card" onSubmit={savePay}><div className="panel-head"><div><h2>Record salary payment</h2><p>Payments are included in Profit & Loss on the payment date.</p></div><button type="button" className="icon-close" onClick={() => setShowPay(false)}>×</button></div><div className="staff-form-grid">
+      <label>Staff member *<select required value={payForm.staffId} onChange={e => changePay('staffId', e.target.value)}><option value="">Select staff</option>{active.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></label><label>Payment date *<input type="date" required max={today} value={payForm.paymentDate} onChange={e => changePay('paymentDate', e.target.value)} /></label><label>Amount paid *<input type="number" required min="0.01" step="0.01" value={payForm.amount} onChange={e => changePay('amount', e.target.value)} /></label><label>Salary period<input type="month" value={payForm.periodLabel} onChange={e => changePay('periodLabel', e.target.value)} /></label><label>Payment method<select value={payForm.paymentMethod} onChange={e => changePay('paymentMethod', e.target.value)}>{['Cash','Bank transfer','Mobile wallet','Cheque','Other'].map(x => <option key={x}>{x}</option>)}</select></label><label>Notes<input maxLength="500" value={payForm.notes} onChange={e => changePay('notes', e.target.value)} /></label>
+    </div><div className="product-form-actions"><button type="button" className="btn ghost" onClick={() => setShowPay(false)}>Cancel</button><button className="btn primary" disabled={busy || !active.length}>{busy ? 'Saving…' : 'Save salary payment'}</button></div></form>}
+    <section className="panel finance-breakdown"><div className="panel-head"><div><h2>Staff directory</h2><p>{staff.length} matching staff members</p></div></div><div className="staff-filters"><div className="product-search"><span>⌕</span><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, role, phone or email..." /></div><select value={status} onChange={e => setStatus(e.target.value)}><option>All</option><option>Active</option><option>Inactive</option></select></div>
+      {staff.length ? <div className="table-wrap"><table className="product-table staff-table"><thead><tr><th>Staff member</th><th>Contact</th><th>Joining date</th><th>Monthly salary</th><th>Status</th><th>Action</th></tr></thead><tbody>{staff.map(p => <tr key={p.id}><td><strong>{p.full_name}</strong><small className="purchase-subline">{p.job_title || 'Staff member'}</small></td><td>{p.phone || '—'}<small className="purchase-subline">{p.email || ''}</small></td><td>{p.hire_date || '—'}</td><td>{currency} {money(p.monthly_salary)}</td><td><span className={'stock-badge ' + (p.status === 'Active' ? 'ok' : 'low')}>{p.status}</span></td><td><button className="purchase-detail-button" onClick={() => edit(p)}>Edit</button></td></tr>)}</tbody></table></div> : <div className="products-empty"><div>♙</div><h3>No staff records found</h3><p>Add staff to track contact details and salary costs.</p></div>}
+    </section>
+    <section className="panel finance-breakdown"><div className="panel-head"><div><h2>Salary payment history</h2><p>Latest {payments.length} recorded payments</p></div></div>{payments.length ? <div className="table-wrap"><table className="product-table staff-table"><thead><tr><th>Date</th><th>Staff member</th><th>Salary period</th><th>Method</th><th>Amount</th><th>Notes</th></tr></thead><tbody>{payments.map(p => <tr key={p.id}><td>{p.payment_date}</td><td>{p.staff_name}</td><td>{p.period_label || '—'}</td><td>{p.payment_method}</td><td>{currency} {money(p.amount)}</td><td>{p.notes || '—'}</td></tr>)}</tbody></table></div> : <div className="products-empty"><div>₨</div><h3>No salary payments yet</h3><p>Record a payment when salary is paid.</p></div>}</section>
+    <p className="finance-note">Staff salary is not counted as an expense until a payment is recorded.</p>
+  </div>;
+}
+
 function Purchases({ currency = 'PKR' }) {
   const [products, setProducts] = useState([]);
   const [purchases, setPurchases] = useState([]);
@@ -718,7 +830,7 @@ function Dashboard({ username, businessName, onLogout }) {
     </aside>
     <main className="dash-main">
       <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (businessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Overview' ? <>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Profit & Loss' ? <ProfitLoss currency={currency} /> : active === 'Staff' ? <Staff currency={currency} /> : active === 'Overview' ? <>
         {summaryError && <div className="form-error">{summaryError}</div>}
         <section className="stat-grid">
           <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
