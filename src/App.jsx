@@ -254,6 +254,7 @@ function Products({ currency = 'PKR' }) {
 
 function Billing({ currency = 'PKR', businessName = '' }) {
   const [products, setProducts] = useState([]);
+  const [bills, setBills] = useState([]);
   const [search, setSearch] = useState('');
   const [items, setItems] = useState([]);
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0,10));
@@ -264,7 +265,8 @@ function Billing({ currency = 'PKR', businessName = '' }) {
   const [lastBill, setLastBill] = useState(null);
   const money = value => new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(Number(value||0));
   const loadProducts = async () => { const r = await window.inventoryAPI.listProducts(); if (r?.ok) setProducts(r.products||[]); else setError(r?.error||'Unable to load products.'); };
-  useEffect(() => { loadProducts(); }, []);
+  const loadBills = async () => { const r = await window.inventoryAPI.listSales({}); if (r?.ok) setBills((r.sales||[]).filter(x=>String(x.notes||'').includes('Generated from Billing section'))); };
+  useEffect(() => { loadProducts(); loadBills(); }, []);
   const filtered = products.filter(p => String(p.name||'').toLowerCase().includes(search.trim().toLowerCase()) || String(p.sku||'').toLowerCase().includes(search.trim().toLowerCase()) || String(p.barcode||'').toLowerCase().includes(search.trim().toLowerCase()));
   const addProduct = product => { setError(''); setMessage(''); setItems(current => { const found=current.find(x=>Number(x.productId)===Number(product.id)); if(found) return current.map(x=>Number(x.productId)===Number(product.id)?{...x,quantity:String(Number(x.quantity||0)+1)}:x); return [...current,{productId:product.id,name:product.name,quantity:'1',unitPrice:String(product.selling_price??0),available:Number(product.stock_quantity||0)}]; }); setSearch(''); };
   const updateItem = (id,key,value) => setItems(current=>current.map(x=>Number(x.productId)===Number(id)?{...x,[key]:value}:x));
@@ -284,7 +286,7 @@ function Billing({ currency = 'PKR', businessName = '' }) {
       const result=await window.inventoryAPI.createSale({customerName:'Walk-in customer',customerPhone:'',saleDate:billDate,discount:0,paidAmount:Math.round((total+Number.EPSILON)*100)/100,paymentMethod:'Cash',notes:'Generated from Billing section',items:items.map(x=>({productId:Number(x.productId),quantity:Number(x.quantity),unitPrice:Number(x.unitPrice)}))});
       if(!result?.ok){setError(result?.error||'Unable to save bill.');return;}
       const saved={saleNumber:result.saleNumber,saleDate:billDate,items:items.map(x=>({...x})),total};
-      setLastBill(saved);setMessage('Bill '+result.saleNumber+' saved. Inventory, sales, analytics and reports have been updated.');setItems([]);await loadProducts();
+      setLastBill(saved);setMessage('Bill '+result.saleNumber+' saved. Inventory, sales, analytics and reports have been updated.');setItems([]);await Promise.all([loadProducts(),loadBills()]);
       if(printAfterSave){const printed=await window.inventoryAPI.printBill({html:buildReceipt(saved)});if(!printed?.ok)setError('Bill saved, but automatic printing failed: '+(printed?.error||'Check the printer and try Print last bill.'));else setMessage('Bill '+result.saleNumber+' saved and sent to the default printer.');}
     }catch(e){setError('The bill could not be saved or printed.');}
     finally{setBusy(false);}
@@ -304,6 +306,7 @@ function Billing({ currency = 'PKR', businessName = '' }) {
         <footer className="billing-footer"><div className="billing-total"><span>Total amount</span><strong>{currency} {money(total)}</strong></div><button type="submit" className="btn primary billing-save-button" disabled={busy||!items.length}>{busy?'Saving bill…':'Save bill'+(printAfterSave?' & Print':'')}</button></footer>
       </section>
     </form>
+    <section className="panel billing-history-panel"><div className="panel-head"><div><h2>Billing history</h2><p>{bills.length} saved bill{bills.length===1?'':'s'} · most recent first</p></div><button type="button" className="btn ghost" onClick={loadBills}>Refresh</button></div>{bills.length?<div className="table-wrap"><table className="product-table billing-items-table"><thead><tr><th>Bill number</th><th>Date</th><th>Products</th><th>Quantities</th><th>Total amount</th><th>Receipt</th></tr></thead><tbody>{bills.map(b=> <tr key={b.id}><td><strong>{b.sale_number}</strong></td><td>{b.sale_date}</td><td>{b.items.map(x=>x.product_name).join(', ')}</td><td>{b.items.reduce((sum,x)=>sum+Number(x.quantity||0),0)}</td><td><strong>{currency} {money(b.total)}</strong></td><td><button type="button" className="purchase-detail-button" onClick={()=>{const saved={saleNumber:b.sale_number,saleDate:b.sale_date,total:Number(b.total||0),items:b.items.map(x=>({name:x.product_name,quantity:x.quantity,unitPrice:x.unit_price}))};setLastBill(saved);setError('');setMessage('Selected '+b.sale_number+' for receipt printing.');}}>View / reprint</button></td></tr>)}</tbody></table></div>:<div className="billing-empty"><span>▣</span><h3>No bills saved yet</h3><p>Your saved billing transactions will appear here.</p></div>}</section>
     {lastBill&&<section className="panel billing-last-bill"><div><h3>Last saved bill</h3><p>{lastBill.saleNumber} · {lastBill.saleDate} · {currency} {money(lastBill.total)}</p></div><button type="button" className="btn ghost" onClick={async()=>{const r=await window.inventoryAPI.printBill({html:buildReceipt(lastBill)});if(!r?.ok)setError(r?.error||'Unable to print bill.');else setMessage('Bill sent to the default printer.');}}>Print last bill</button></section>}
     <p className="sales-footnote">Bills are saved as completed cash sales so the product quantities, Sales, Overview, Dashboard Analytics, Profit & Loss, and Reports stay consistent. Check stock before saving; all billing transactions are stored locally.</p>
   </div>;
