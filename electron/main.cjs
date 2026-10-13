@@ -123,6 +123,25 @@ function createDatabase() {
     CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date DESC);
     CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id);
 
+    CREATE TABLE IF NOT EXISTS staff (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, job_title TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', monthly_salary REAL NOT NULL DEFAULT 0,
+      hire_date TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'Active', notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS staff_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER NOT NULL REFERENCES staff(id), staff_name TEXT NOT NULL,
+      payment_date TEXT NOT NULL, amount REAL NOT NULL, payment_method TEXT NOT NULL DEFAULT 'Cash',
+      period_label TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_staff_payments_date ON staff_payments(payment_date DESC);
+    CREATE TABLE IF NOT EXISTS business_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, expense_date TEXT NOT NULL, category TEXT NOT NULL, description TEXT NOT NULL,
+      amount REAL NOT NULL, payment_method TEXT NOT NULL DEFAULT 'Cash', notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_business_expenses_date ON business_expenses(expense_date DESC);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -517,6 +536,71 @@ app.whenReady().then(() => {
     } catch (error) {
       return { ok: false, error: error.message || 'Unable to save this sale.' };
     }
+  });
+
+  ipcMain.handle('staff:list', (_event, f = {}) => {
+    try {
+      const c = [], p = [];
+      if (f.status && f.status !== 'All') { c.push('status = ?'); p.push(String(f.status)); }
+      if (f.search) { const q = '%' + String(f.search).trim() + '%'; c.push('(full_name LIKE ? OR job_title LIKE ? OR phone LIKE ? OR email LIKE ?)'); p.push(q,q,q,q); }
+      const where = c.length ? 'WHERE ' + c.join(' AND ') : '';
+      return { ok:true, staff:db.prepare(`SELECT * FROM staff ${where} ORDER BY full_name COLLATE NOCASE`).all(...p),
+        payments:db.prepare('SELECT * FROM staff_payments ORDER BY date(payment_date) DESC,id DESC LIMIT 300').all(),
+        paidThisMonth:db.prepare("SELECT SUM(amount) AS paid FROM staff_payments WHERE strftime('%Y-%m',payment_date)=strftime('%Y-%m','now','localtime')").get() };
+    } catch(e) { return {ok:false,error:'Unable to load staff records.'}; }
+  });
+  ipcMain.handle('staff:save', (_event,d) => {
+    const id=d?.id?Number(d.id):null, name=String(d?.fullName||'').trim(), role=String(d?.jobTitle||'').trim();
+    const phone=String(d?.phone||'').trim(), email=String(d?.email||'').trim(), date=String(d?.hireDate||'').trim();
+    const status=String(d?.status||'Active'), notes=String(d?.notes||'').trim(), salary=Number(d?.monthlySalary);
+    if(!name) return {ok:false,error:'Staff name is required.'};
+    if(!Number.isFinite(salary)||salary<0) return {ok:false,error:'Monthly salary must be zero or more.'};
+    if(!['Active','Inactive'].includes(status)) return {ok:false,error:'Invalid staff status.'};
+    if(date && (!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(Date.parse(date+'T00:00:00')))) return {ok:false,error:'Enter a valid joining date.'};
+    try {
+      if(id) { const r=db.prepare('UPDATE staff SET full_name=?,job_title=?,phone=?,email=?,monthly_salary=?,hire_date=?,status=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(name,role,phone,email,salary,date,status,notes,id); if(!r.changes)return {ok:false,error:'Staff member not found.'}; }
+      else db.prepare('INSERT INTO staff(full_name,job_title,phone,email,monthly_salary,hire_date,status,notes) VALUES(?,?,?,?,?,?,?,?)').run(name,role,phone,email,salary,date,status,notes);
+      return {ok:true};
+    } catch(e) { return {ok:false,error:'Unable to save staff details.'}; }
+  });
+  ipcMain.handle('staff:payment:create', (_event,d) => {
+    const id=Number(d?.staffId), date=String(d?.paymentDate||'').trim(), amount=Number(d?.amount);
+    const method=String(d?.paymentMethod||'Cash'), period=String(d?.periodLabel||'').trim(), notes=String(d?.notes||'').trim();
+    if(!Number.isInteger(id)||id<1)return {ok:false,error:'Choose a staff member.'};
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(Date.parse(date+'T00:00:00')))return {ok:false,error:'Choose a valid payment date.'};
+    if(!Number.isFinite(amount)||amount<=0)return {ok:false,error:'Salary payment must be greater than zero.'};
+    if(!['Cash','Bank transfer','Mobile wallet','Cheque','Other'].includes(method))return {ok:false,error:'Choose a valid payment method.'};
+    try { const s=db.prepare('SELECT id,full_name FROM staff WHERE id=?').get(id); if(!s)return {ok:false,error:'Staff member not found.'};
+      db.prepare('INSERT INTO staff_payments(staff_id,staff_name,payment_date,amount,payment_method,period_label,notes) VALUES(?,?,?,?,?,?,?)').run(s.id,s.full_name,date,amount,method,period,notes); return {ok:true};
+    } catch(e) { return {ok:false,error:'Unable to save salary payment.'}; }
+  });
+  ipcMain.handle('expenses:list', (_event,f={}) => {
+    try { const c=[],p=[]; if(f.from){c.push('date(expense_date)>=date(?)');p.push(String(f.from));} if(f.to){c.push('date(expense_date)<=date(?)');p.push(String(f.to));}
+      if(f.search){const q='%'+String(f.search).trim()+'%';c.push('(category LIKE ? OR description LIKE ? OR notes LIKE ?)');p.push(q,q,q);}
+      const w=c.length?'WHERE '+c.join(' AND '):'';return {ok:true,expenses:db.prepare(`SELECT * FROM business_expenses ${w} ORDER BY date(expense_date) DESC,id DESC LIMIT 1000`).all(...p)};
+    } catch(e) { return {ok:false,error:'Unable to load expenses.'}; }
+  });
+  ipcMain.handle('expenses:create', (_event,d) => {
+    const date=String(d?.expenseDate||'').trim(), cat=String(d?.category||'').trim(), desc=String(d?.description||'').trim();
+    const amount=Number(d?.amount), method=String(d?.paymentMethod||'Cash'), notes=String(d?.notes||'').trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(Date.parse(date+'T00:00:00')))return {ok:false,error:'Choose a valid expense date.'};
+    if(!cat||!desc)return {ok:false,error:'Category and description are required.'};
+    if(!Number.isFinite(amount)||amount<=0)return {ok:false,error:'Expense amount must be greater than zero.'};
+    try { const r=db.prepare('INSERT INTO business_expenses(expense_date,category,description,amount,payment_method,notes) VALUES(?,?,?,?,?,?)').run(date,cat,desc,amount,method,notes);return {ok:true,id:r.lastInsertRowid}; }
+    catch(e) { return {ok:false,error:'Unable to save expense.'}; }
+  });
+  ipcMain.handle('expenses:delete', (_event,id) => { try { const r=db.prepare('DELETE FROM business_expenses WHERE id=?').run(Number(id));return r.changes?{ok:true}:{ok:false,error:'Expense not found.'}; } catch(e){return {ok:false,error:'Unable to delete expense.'};} });
+  ipcMain.handle('profit-loss:summary', (_event,f={}) => {
+    const from=String(f.from||new Date().toISOString().slice(0,7)+'-01'), to=String(f.to||new Date().toISOString().slice(0,10));
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)return {ok:false,error:'Choose a valid reporting date range.'};
+    try {
+      const s=db.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(total),0) AS revenue FROM sales WHERE date(sale_date) BETWEEN date(?) AND date(?)").get(from,to);
+      const c=db.prepare("SELECT COALESCE(SUM(quantity*unit_cost),0) AS cogs FROM sale_items WHERE sale_id IN (SELECT id FROM sales WHERE date(sale_date) BETWEEN date(?) AND date(?))").get(from,to);
+      const e=db.prepare("SELECT COALESCE(SUM(amount),0) AS total FROM business_expenses WHERE date(expense_date) BETWEEN date(?) AND date(?)").get(from,to);
+      const p=db.prepare("SELECT COALESCE(SUM(amount),0) AS total FROM staff_payments WHERE date(payment_date) BETWEEN date(?) AND date(?)").get(from,to);
+      const b=db.prepare('SELECT currency FROM business WHERE id=1').get(), revenue=Number(s.revenue||0), cogs=Number(c.cogs||0), operating=Number(e.total||0), salary=Number(p.total||0), gross=revenue-cogs;
+      return {ok:true,from,to,currency:b?.currency||'PKR',salesCount:Number(s.count||0),revenue,costOfGoodsSold:cogs,grossProfit:gross,businessExpenses:operating,salaryExpenses:salary,netProfit:gross-operating-salary};
+    } catch(e) { return {ok:false,error:'Unable to calculate profit and loss.'}; }
   });
 
   ipcMain.handle('products:list', () => ({
