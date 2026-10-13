@@ -547,8 +547,11 @@ app.whenReady().then(() => {
       if (f.status && f.status !== 'All') { c.push('status = ?'); p.push(String(f.status)); }
       if (f.search) { const q = '%' + String(f.search).trim() + '%'; c.push('(full_name LIKE ? OR job_title LIKE ? OR phone LIKE ? OR email LIKE ?)'); p.push(q,q,q,q); }
       const where = c.length ? 'WHERE ' + c.join(' AND ') : '';
+      const month = /^\\d{4}-\\d{2}$/.test(String(f.month||'')) ? String(f.month) : new Date().toISOString().slice(0,7);
       return { ok:true, staff:db.prepare(`SELECT * FROM staff ${where} ORDER BY full_name COLLATE NOCASE`).all(...p),
-        payments:db.prepare('SELECT * FROM staff_payments ORDER BY date(payment_date) DESC,id DESC LIMIT 300').all(),
+        payments:db.prepare('SELECT * FROM staff_payments ORDER BY date(payment_date) DESC,id DESC LIMIT 500').all(),
+        monthlyBalances:db.prepare("SELECT staff_id,staff_name,period_label,SUM(CASE WHEN payment_type='Advance' THEN amount ELSE 0 END) AS advances,SUM(CASE WHEN payment_type='Salary' THEN amount ELSE 0 END) AS salary_paid,SUM(amount) AS total_paid FROM staff_payments WHERE period_label=? GROUP BY staff_id,staff_name,period_label").all(month),
+        selectedMonth:month,
         paidThisMonth:db.prepare("SELECT SUM(amount) AS paid FROM staff_payments WHERE strftime('%Y-%m',payment_date)=strftime('%Y-%m','now','localtime')").get() };
     } catch(e) { return {ok:false,error:'Unable to load staff records.'}; }
   });
