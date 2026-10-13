@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('inventoryAPI', {
   getProfitLossSummary: (filters) => ipcRenderer.invoke('profit-loss:summary', filters),
   listSales: (filters) => ipcRenderer.invoke('sales:list', filters),
   createSale: (data) => ipcRenderer.invoke('sales:create', data),
+  printBill: (data) => ipcRenderer.invoke('billing:print', data),
   listPurchases: (filters) => ipcRenderer.invoke('purchases:list', filters),
   createPurchase: (data) => ipcRenderer.invoke('purchases:create', data),
   listStockMovements: (filters) => ipcRenderer.invoke('stock:movements', filters),
