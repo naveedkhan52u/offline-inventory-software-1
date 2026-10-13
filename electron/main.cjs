@@ -547,7 +547,7 @@ app.whenReady().then(() => {
       if (f.status && f.status !== 'All') { c.push('status = ?'); p.push(String(f.status)); }
       if (f.search) { const q = '%' + String(f.search).trim() + '%'; c.push('(full_name LIKE ? OR job_title LIKE ? OR phone LIKE ? OR email LIKE ?)'); p.push(q,q,q,q); }
       const where = c.length ? 'WHERE ' + c.join(' AND ') : '';
-      const month = /^\\d{4}-\\d{2}$/.test(String(f.month||'')) ? String(f.month) : new Date().toISOString().slice(0,7);
+      const month = /^\d{4}-\d{2}$/.test(String(f.month||'')) ? String(f.month) : new Date().toISOString().slice(0,7);
       return { ok:true, staff:db.prepare(`SELECT * FROM staff ${where} ORDER BY full_name COLLATE NOCASE`).all(...p),
         payments:db.prepare('SELECT * FROM staff_payments ORDER BY date(payment_date) DESC,id DESC LIMIT 500').all(),
         monthlyBalances:db.prepare("SELECT staff_id,staff_name,period_label,SUM(CASE WHEN payment_type='Advance' THEN amount ELSE 0 END) AS advances,SUM(CASE WHEN payment_type='Salary' THEN amount ELSE 0 END) AS salary_paid,SUM(amount) AS total_paid FROM staff_payments WHERE period_label=? GROUP BY staff_id,staff_name,period_label").all(month),
@@ -577,7 +577,7 @@ app.whenReady().then(() => {
     if(!Number.isFinite(amount)||amount<=0)return {ok:false,error:'Salary payment must be greater than zero.'};
     if(!['Cash','Bank transfer','Mobile wallet','Cheque','Other'].includes(method))return {ok:false,error:'Choose a valid payment method.'};
     if(!['Salary','Advance'].includes(paymentType))return {ok:false,error:'Choose Salary or Advance payment type.'};
-    if(!/^\\d{4}-\\d{2}$/.test(period))return {ok:false,error:'Choose the salary month this payment belongs to.'};
+    if(!/^\d{4}-\d{2}$/.test(period))return {ok:false,error:'Choose the salary month this payment belongs to.'};
     try { const s=db.prepare('SELECT id,full_name FROM staff WHERE id=?').get(id); if(!s)return {ok:false,error:'Staff member not found.'};
       db.prepare('INSERT INTO staff_payments(staff_id,staff_name,payment_date,amount,payment_method,period_label,notes,payment_type) VALUES(?,?,?,?,?,?,?,?)').run(s.id,s.full_name,date,amount,method,period,notes,paymentType); return {ok:true};
     } catch(e) { return {ok:false,error:'Unable to save salary payment.'}; }
