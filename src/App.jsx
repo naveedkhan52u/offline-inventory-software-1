@@ -999,6 +999,64 @@ function Dashboard({ username, businessName, onLogout }) {
   </div>;
 }
 
+
+function Settings({ username = '', onSaved = () => {} }) {
+  const [form, setForm] = useState({ businessName:'', ownerName:'', phone:'', address:'', currency:'PKR', email:'', taxNumber:'', receiptFooter:'Thank you for shopping with us.' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const result = await window.inventoryAPI.getBusinessSettings();
+        if (!mounted) return;
+        if (result?.ok) {
+          const b = result.business || {};
+          setForm({ businessName:b.business_name||'', ownerName:b.owner_name||'', phone:b.phone||'', address:b.address||'', currency:b.currency||'PKR', email:b.email||'', taxNumber:b.tax_number||'', receiptFooter:b.receipt_footer||'Thank you for shopping with us.' });
+        } else setError(result?.error || 'Unable to load business settings.');
+      } catch (e) { if (mounted) setError('Unable to load business settings from the local database.'); }
+      finally { if (mounted) setLoading(false); }
+    })();
+    return () => { mounted = false; };
+  }, []);
+  const save = async event => {
+    event.preventDefault(); setSaving(true); setError(''); setMessage('');
+    try {
+      const result = await window.inventoryAPI.saveBusinessSettings(form);
+      if (!result?.ok) { setError(result?.error || 'Unable to save business settings.'); return; }
+      const b = result.business || {};
+      setForm({ businessName:b.business_name||'', ownerName:b.owner_name||'', phone:b.phone||'', address:b.address||'', currency:b.currency||'PKR', email:b.email||'', taxNumber:b.tax_number||'', receiptFooter:b.receipt_footer||'Thank you for shopping with us.' });
+      onSaved(b);
+      setMessage('Business settings saved. Updated details will be used by the dashboard and new bills.');
+    } catch (e) { setError('Unable to save business settings to the local database.'); }
+    finally { setSaving(false); }
+  };
+  if (loading) return <section className="panel settings-panel"><div className="settings-loading">Loading business settings…</div></section>;
+  return <div className="settings-page">
+    <section className="settings-intro"><div className="settings-intro-icon">⚙</div><div><div className="eyebrow">ADMIN CONFIGURATION</div><h2>Business settings</h2><p>Manage your shop identity, contact details, currency, and receipt information. Changes are stored on this computer.</p></div></section>
+    {error && <div className="form-error product-error">{error}</div>}
+    {message && <div className="product-message">{message}</div>}
+    <form className="panel settings-panel" onSubmit={save}>
+      <div className="panel-head"><div><h2>Business profile</h2><p>These details appear in the dashboard and on newly generated bills.</p></div><span className="period">Local database</span></div>
+      <div className="settings-fields">
+        <label>Business / shop name *<input required maxLength="120" value={form.businessName} onChange={e=>update('businessName',e.target.value)} placeholder="e.g. Khan General Store"/></label>
+        <label>Owner name *<input required maxLength="120" value={form.ownerName} onChange={e=>update('ownerName',e.target.value)} placeholder="Business owner name"/></label>
+        <label>Phone number<input type="tel" maxLength="40" value={form.phone} onChange={e=>update('phone',e.target.value)} placeholder="+92…"/></label>
+        <label>Email address<input type="email" maxLength="160" value={form.email} onChange={e=>update('email',e.target.value)} placeholder="shop@example.com"/></label>
+        <label className="settings-address-field">Business address<textarea rows="3" maxLength="500" value={form.address} onChange={e=>update('address',e.target.value)} placeholder="Shop number, street, city"/></label>
+        <label>Business currency *<select required value={form.currency} onChange={e=>update('currency',e.target.value)}><option value="PKR">PKR — Pakistani Rupee</option><option value="USD">USD — US Dollar</option><option value="EUR">EUR — Euro</option><option value="GBP">GBP — Pound Sterling</option></select></label>
+        <label>Tax / registration number<input maxLength="100" value={form.taxNumber} onChange={e=>update('taxNumber',e.target.value)} placeholder="Optional tax or registration ID"/></label>
+        <label className="settings-address-field">Bill / receipt footer<textarea rows="2" maxLength="240" value={form.receiptFooter} onChange={e=>update('receiptFooter',e.target.value)} placeholder="Thank you for shopping with us."/></label>
+      </div>
+      <div className="settings-save-row"><div><strong>Save changes to this computer</strong><small>Existing products, sales, purchases, and staff records will not be deleted.</small></div><button className="btn primary settings-save-button" disabled={saving}>{saving?'Saving…':'Save business settings'}</button></div>
+    </form>
+    <section className="panel settings-account-panel"><div className="panel-head"><div><h2>Administrator account</h2><p>Login identity for this local StockDesk installation.</p></div></div><div className="settings-account-row"><div><span>Username</span><strong>{username || 'Administrator'}</strong></div><div><span>Storage</span><strong>Local SQLite database</strong></div><div><span>Connectivity</span><strong><span className="stock-badge ok">Works offline</span></strong></div></div><p className="settings-security-note">Your login password is stored as a secure hash. Account password changes are not part of this business-profile form.</p></section>
+  </div>;
+}
+
 function Stat({label,value,note,icon}) { return <div className="stat"><div className="stat-icon">{icon}</div><span>{label}</span><strong>{value}</strong><small>{note}</small></div>; }
 
 export default function App() {
