@@ -36,6 +36,9 @@ function createDatabase() {
       phone TEXT NOT NULL DEFAULT '',
       address TEXT NOT NULL DEFAULT '',
       currency TEXT NOT NULL DEFAULT 'PKR',
+      email TEXT NOT NULL DEFAULT '',
+      tax_number TEXT NOT NULL DEFAULT '',
+      receipt_footer TEXT NOT NULL DEFAULT 'Thank you for shopping with us.',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -147,6 +150,12 @@ function createDatabase() {
       value TEXT NOT NULL
     );
   `);
+
+  // Add business profile fields without deleting existing local business data.
+  const businessColumns = db.prepare('PRAGMA table_info(business)').all().map(column => column.name);
+  if (!businessColumns.includes('email')) db.exec("ALTER TABLE business ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+  if (!businessColumns.includes('tax_number')) db.exec("ALTER TABLE business ADD COLUMN tax_number TEXT NOT NULL DEFAULT ''");
+  if (!businessColumns.includes('receipt_footer')) db.exec("ALTER TABLE business ADD COLUMN receipt_footer TEXT NOT NULL DEFAULT 'Thank you for shopping with us.'");
 
   // Keep the database compatible with the earlier prototype schema.
   const columns = db.prepare('PRAGMA table_info(users)').all().map(column => column.name);
@@ -282,6 +291,37 @@ app.whenReady().then(() => {
     return { ok: true, username: user.username, businessName: business?.business_name || '' };
   });
   
+  ipcMain.handle('settings:get-business', () => {
+    try {
+      const business = db.prepare('SELECT business_name, owner_name, phone, address, currency, email, tax_number, receipt_footer FROM business WHERE id = 1').get();
+      const user = db.prepare('SELECT username FROM users ORDER BY id LIMIT 1').get();
+      return { ok: true, business: business || { business_name: '', owner_name: '', phone: '', address: '', currency: 'PKR', email: '', tax_number: '', receipt_footer: 'Thank you for shopping with us.' }, username: user?.username || '' };
+    } catch (error) {
+      return { ok: false, error: 'Unable to load business settings.' };
+    }
+  });
+
+  ipcMain.handle('settings:save-business', (_event, data = {}) => {
+    try {
+      const businessName = String(data.businessName || '').trim();
+      const ownerName = String(data.ownerName || '').trim();
+      const phone = String(data.phone || '').trim();
+      const address = String(data.address || '').trim();
+      const currency = String(data.currency || 'PKR').trim().toUpperCase();
+      const email = String(data.email || '').trim();
+      const taxNumber = String(data.taxNumber || '').trim();
+      const receiptFooter = String(data.receiptFooter || '').trim();
+      if (!businessName) return { ok: false, error: 'Business name is required.' };
+      if (!ownerName) return { ok: false, error: 'Owner name is required.' };
+      if (!['PKR', 'USD', 'EUR', 'GBP'].includes(currency)) return { ok: false, error: 'Select a supported business currency.' };
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Enter a valid email address.' };
+      db.prepare(`UPDATE business SET business_name=?, owner_name=?, phone=?, address=?, currency=?, email=?, tax_number=?, receipt_footer=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(businessName, ownerName, phone, address, currency, email, taxNumber, receiptFooter || 'Thank you for shopping with us.');
+      return { ok: true, business: { business_name: businessName, owner_name: ownerName, phone, address, currency, email, tax_number: taxNumber, receipt_footer: receiptFooter || 'Thank you for shopping with us.' } };
+    } catch (error) {
+      return { ok: false, error: 'Unable to save business settings.' };
+    }
+  });
+
   ipcMain.handle('dashboard:summary', () => {
     const products = db.prepare('SELECT id, name, category, buying_price, selling_price, stock_quantity, low_stock_threshold, created_at, updated_at FROM products').all();
     const business = db.prepare('SELECT currency FROM business WHERE id = 1').get();
