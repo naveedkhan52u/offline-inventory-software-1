@@ -92,3 +92,25 @@
 .billing-percent-field .billing-discount-input{width:64px}
 .billing-percent-field span{font-size:11px;font-weight:700;color:#637586}
 .billing-discount-summary .billing-percent-field input{flex:1;min-width:0}
+
+.billing-templates-page{display:flex;flex-direction:column;gap:20px}
+.billing-template-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.billing-template-card{border:1px solid #e0e7ef;border-radius:12px;padding:14px;background:#fff;display:flex;flex-direction:column;gap:10px;min-width:0}
+.billing-template-card.chosen{border:2px solid #28456c;box-shadow:0 0 0 2px #28456c12}
+.billing-template-card h3{font-size:15px;margin:5px 0 0;color:#182c46}
+.billing-template-card p{font-size:12px;line-height:1.6;color:#65768a;min-height:40px;margin:0}
+.template-preview{border:1px solid #dce4ed;border-radius:7px;min-height:290px;padding:15px 12px 12px;color:#17202b;background:#fff;display:flex;flex-direction:column;overflow:hidden}
+.template-shop{text-align:center;font-size:17px;font-weight:750;margin:3px 0 5px}
+.template-tagline,.template-address,.template-footer{text-align:center;font-size:10px;line-height:1.6}
+.template-rule{border-top:1px solid #aab5c2;margin:12px 0 9px}
+.template-bill-meta{display:flex;justify-content:space-between;gap:6px;font-size:9px;margin-bottom:10px}
+.template-preview table{width:100%;border-collapse:collapse;font-size:10px}
+.template-preview th,.template-preview td{padding:7px 3px;text-align:left;border-bottom:1px solid #e6ebf1;font-size:9px}
+.template-preview .template-total{display:flex;justify-content:space-between;margin-top:auto;padding:12px 3px 7px;font-size:12px}
+.template-footer{padding-top:12px}
+.template-preview-blue{background:linear-gradient(#1557a0 0 66px,#fff 66px);border-color:#1557a0}
+.template-preview-blue .template-shop,.template-preview-blue .template-tagline{color:white}
+.template-preview-blue .template-total{background:#1557a0;color:white;border-radius:4px;padding:9px;margin-top:15px}
+.template-preview-black .template-total{background:#1c1e22;color:white;padding:10px;margin-top:15px}
+@media(max-width:1100px){.billing-template-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.billing-template-grid{grid-template-columns:1fr}.template-preview{min-height:260px}}
