@@ -118,9 +118,9 @@
 .billing-history-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .billing-reprint-button{padding:7px 11px;font-size:12px}
 .billing-view-overlay{position:fixed;inset:0;z-index:1000;background:rgba(14,25,40,.62);display:flex;align-items:center;justify-content:center;padding:20px}
-.billing-view-dialog{width:min(900px,100%);height:min(92vh,900px);background:#f5f7fa;border-radius:14px;box-shadow:0 20px 70px #0003;display:flex;flex-direction:column;overflow:hidden}
+.billing-view-dialog{width:min(680px,100%);height:min(88vh,820px);background:#f5f7fa;border-radius:14px;box-shadow:0 20px 70px #0003;display:flex;flex-direction:column;overflow:hidden}
 .billing-view-dialog>header,.billing-view-dialog>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;background:white;border-bottom:1px solid #e0e7ef}
 .billing-view-dialog>header h2{font-size:18px;margin:0 0 4px}.billing-view-dialog>header p{margin:0;color:#687888;font-size:12px}
 .billing-view-dialog>footer{justify-content:flex-end;border-top:1px solid #e0e7ef;border-bottom:0}
-.billing-view-frame{flex:1;width:100%;border:0;background:#fff}
+.billing-view-frame{flex:1;width:100%;min-height:0;border:0;background:#e9edf2}
 @media(max-width:600px){.billing-view-overlay{padding:8px}.billing-view-dialog>header,.billing-view-dialog>footer{padding:10px;flex-wrap:wrap}.billing-history-actions{min-width:110px}}
