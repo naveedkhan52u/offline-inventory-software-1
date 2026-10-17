@@ -155,8 +155,10 @@ function createDatabase() {
   // Add business profile fields without deleting existing local business data.
   const salesColumns = db.prepare('PRAGMA table_info(sales)').all().map(column => column.name);
   if (!salesColumns.includes('bill_discount')) db.exec('ALTER TABLE sales ADD COLUMN bill_discount REAL NOT NULL DEFAULT 0');
+  if (!salesColumns.includes('bill_discount_percent')) db.exec('ALTER TABLE sales ADD COLUMN bill_discount_percent REAL NOT NULL DEFAULT 0');
   const saleItemColumns = db.prepare('PRAGMA table_info(sale_items)').all().map(column => column.name);
   if (!saleItemColumns.includes('discount')) db.exec('ALTER TABLE sale_items ADD COLUMN discount REAL NOT NULL DEFAULT 0');
+  if (!saleItemColumns.includes('discount_percent')) db.exec('ALTER TABLE sale_items ADD COLUMN discount_percent REAL NOT NULL DEFAULT 0');
 
   const businessColumns = db.prepare('PRAGMA table_info(business)').all().map(column => column.name);
   if (!businessColumns.includes('email')) db.exec("ALTER TABLE business ADD COLUMN email TEXT NOT NULL DEFAULT ''");
@@ -557,7 +559,7 @@ app.whenReady().then(() => {
       }
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       const sales = db.prepare(`SELECT * FROM sales ${where} ORDER BY date(sale_date) DESC, id DESC LIMIT 1000`).all(...params);
-      const itemQuery = db.prepare('SELECT id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit, discount FROM sale_items WHERE sale_id = ? ORDER BY id');
+      const itemQuery = db.prepare('SELECT id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit, discount, discount_percent FROM sale_items WHERE sale_id = ? ORDER BY id');
       return { ok: true, sales: sales.map(sale => ({ ...sale, items: itemQuery.all(sale.id) })) };
     } catch (error) {
       return { ok: false, error: 'Unable to load sales records.' };
@@ -590,9 +592,11 @@ app.whenReady().then(() => {
           const unitPrice = item.unitPrice === undefined || item.unitPrice === null || item.unitPrice === '' ? Number(product.selling_price || 0) : Number(item.unitPrice);
           if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Selling prices must be valid non-negative numbers.');
           const itemDiscount = item.discount === undefined || item.discount === null || item.discount === '' ? 0 : Number(item.discount);
+          const discountPercent = item.discountPercent === undefined || item.discountPercent === null || item.discountPercent === '' ? 0 : Number(item.discountPercent);
           const grossLineTotal = Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100;
-          if (!Number.isFinite(itemDiscount) || itemDiscount < 0 || itemDiscount > grossLineTotal) throw new Error('Each product discount must be zero or less than or equal to its line amount.');
-          return { product, productId, quantity, unitPrice, itemDiscount, unitCost: Number(product.buying_price || 0), grossLineTotal, lineTotal: Math.round((grossLineTotal - itemDiscount + Number.EPSILON) * 100) / 100 };
+          if (!Number.isFinite(itemDiscount) || itemDiscount < 0 || itemDiscount > grossLineTotal) throw new Error('Each product discount amount must be valid and cannot exceed its line amount.');
+          if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) throw new Error('Product discount percentage must be between 0 and 100.');
+          return { product, productId, quantity, unitPrice, itemDiscount, discountPercent, unitCost: Number(product.buying_price || 0), grossLineTotal, lineTotal: Math.round((grossLineTotal - itemDiscount + Number.EPSILON) * 100) / 100 };
         });
         const quantities = new Map();
         for (const item of preparedItems) quantities.set(item.productId, (quantities.get(item.productId) || 0) + item.quantity);
@@ -620,14 +624,16 @@ app.whenReady().then(() => {
         if (paidAmount > total + 0.005) throw new Error('Paid amount cannot exceed the final sale total.');
         const paymentStatus = paidAmount <= 0 ? 'Unpaid' : paidAmount + 0.005 >= total ? 'Paid' : 'Partial';
         const saleNumber = 'SAL-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14) + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
-        const sale = db.prepare('INSERT INTO sales (sale_number, customer_name, customer_phone, sale_date, subtotal, discount, total, paid_amount, payment_method, payment_status, notes, bill_discount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(saleNumber, customerName, customerPhone, saleDate, subtotal, totalDiscount, total, paidAmount, paymentMethod, paymentStatus, notes, discount);
-        const insertItem = db.prepare('INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit, discount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        const discountPercent = Number.isFinite(Number(data?.discountPercent)) ? Number(data.discountPercent) : 0;
+        if (discountPercent < 0 || discountPercent > 100) throw new Error('Overall discount percentage must be between 0 and 100.');
+        const sale = db.prepare('INSERT INTO sales (sale_number, customer_name, customer_phone, sale_date, subtotal, discount, total, paid_amount, payment_method, payment_status, notes, bill_discount, bill_discount_percent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(saleNumber, customerName, customerPhone, saleDate, subtotal, totalDiscount, total, paidAmount, paymentMethod, paymentStatus, notes, discount, discountPercent);
+        const insertItem = db.prepare('INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit, discount, discount_percent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         const updateProduct = db.prepare('UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
         const insertMovement = db.prepare("INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, 'removal', ?, ?, ?, 'Sale / issued', ?)");
         for (const item of preparedItems) {
           const lineProfit = Math.round((item.lineTotal - item.quantity * item.unitCost + Number.EPSILON) * 100) / 100;
-          insertItem.run(sale.lastInsertRowid, item.productId, item.product.name, item.quantity, item.unitPrice, item.unitCost, item.lineTotal, lineProfit, item.itemDiscount);
+          insertItem.run(sale.lastInsertRowid, item.productId, item.product.name, item.quantity, item.unitPrice, item.unitCost, item.lineTotal, lineProfit, item.itemDiscount, item.discountPercent);
         }
         for (const [productId, quantity] of quantities) {
           const product = preparedItems.find(item => item.productId === productId).product;
