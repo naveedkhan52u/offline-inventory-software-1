@@ -138,7 +138,7 @@ function Auth({ mode, setMode, onSuccess }) {
 const NAV = [
   ['Overview','⌂'], ['Products','▦'], ['Stock','↕'], ['Purchases','＋'], ['Sales','₨'], ['Billing','▣'],
   ['Profit & Loss','◒'], ['Staff','♙'], ['Dashboard Analytics','◫'], ['Reports','▤'],
-  ['Backup & Restore','↥'], ['Barcode/QR','▥'], ['Installation','⌘']
+  ['Backup & Restore','↥'], ['Barcode/QR','▥'], ['Installation','⌘'], ['Settings','⚙']
 ];
 
 function Products({ currency = 'PKR' }) {
@@ -920,6 +920,7 @@ function Stock({ currency = 'PKR' }) {
 
 function Dashboard({ username, businessName, onLogout }) {
   const [active, setActive] = useState('Overview');
+  const [displayBusinessName, setDisplayBusinessName] = useState(businessName || '');
   const [summary, setSummary] = useState({
     currency: 'PKR',
     totalProducts: 0,
@@ -965,11 +966,11 @@ function Dashboard({ username, businessName, onLogout }) {
       <Logo />
       <div className="nav-label">MAIN MENU</div>
       {NAV.map(([name,icon])=><button className={active===name?'nav-item active':'nav-item'} key={name} onClick={()=>setActive(name)}><span>{icon}</span>{name}</button>)}
-      <div className="sidebar-bottom"><button className="nav-item"><span>⚙</span>Settings</button><button className="nav-item logout" onClick={onLogout}><span>↪</span>Sign out</button></div>
+      <div className="sidebar-bottom"><button className={active === 'Settings' ? 'nav-item active' : 'nav-item'} onClick={() => setActive('Settings')}><span>⚙</span>Settings</button><button className="nav-item logout" onClick={onLogout}><span>↪</span>Sign out</button></div>
     </aside>
     <main className="dash-main">
-      <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (businessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Billing' ? <Billing currency={currency} businessName={businessName} /> : active === 'Profit & Loss' ? <ProfitLoss currency={currency} /> : active === 'Staff' ? <Staff currency={currency} /> : active === 'Dashboard Analytics' ? <DashboardAnalytics currency={currency} /> : active === 'Reports' ? <Reports currency={currency} /> : active === 'Overview' ? <>
+      <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (displayBusinessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Billing' ? <Billing currency={currency} businessName={displayBusinessName} /> : active === 'Profit & Loss' ? <ProfitLoss currency={currency} /> : active === 'Staff' ? <Staff currency={currency} /> : active === 'Dashboard Analytics' ? <DashboardAnalytics currency={currency} /> : active === 'Reports' ? <Reports currency={currency} /> : active === 'Settings' ? <Settings username={username} onSaved={business => { setDisplayBusinessName(business.business_name || ''); setSummary(current => ({ ...current, currency: business.currency || 'PKR' })); }} /> : active === 'Overview' ? <>
         {summaryError && <div className="form-error">{summaryError}</div>}
         <section className="stat-grid">
           <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
