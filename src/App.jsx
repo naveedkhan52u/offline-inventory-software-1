@@ -136,7 +136,7 @@ function Auth({ mode, setMode, onSuccess }) {
 }
 
 const NAV = [
-  ['Overview','⌂'], ['Products','▦'], ['Stock','↕'], ['Purchases','＋'], ['Sales','₨'], ['Billing','▣'],
+  ['Overview','⌂'], ['Products','▦'], ['Stock','↕'], ['Purchases','＋'], ['Sales','₨'], ['Billing','▣'], ['Billing Templates','▤'],
   ['Profit & Loss','◒'], ['Staff','♙'], ['Dashboard Analytics','◫'], ['Reports','▤'],
   ['Backup & Restore','↥'], ['Barcode/QR','▥'], ['Installation','⌘'], ['Settings','⚙']
 ];
@@ -252,7 +252,26 @@ function Products({ currency = 'PKR' }) {
   </div>;
 }
 
-function Billing({ currency = 'PKR', businessName = '' }) {
+function BillingTemplates({ selected, onSelect, currency = 'PKR' }) {
+  const templates = [
+    { id:'classic', name:'Template 1 · Clean & Simple', description:'Minimal black-and-white receipt with clear totals and a neat product table.' },
+    { id:'blue', name:'Template 2 · Modern Blue', description:'Blue branded header, clean item rows, and a prominent final total.' },
+    { id:'black', name:'Template 3 · Detailed Black', description:'Bold dark total bar, detailed discounts, and a compact professional receipt.' }
+  ];
+  return <section className="billing-templates-page">
+    <div className="section-heading"><div><h2>Billing Templates</h2><p>Choose the layout used for new bills and printed receipts. Your selection is saved on this computer.</p></div></div>
+    <div className="billing-template-grid">{templates.map((t,index)=><article className={'billing-template-card '+(selected===t.id?'chosen':'')} key={t.id}>
+      <div className={'template-preview template-preview-'+t.id}>
+        <div className="template-shop">{t.id==='blue'?'▣ ':t.id==='black'?'▤ ':''}ABC General Store</div><div className="template-tagline">Your Trusted Store</div><div className="template-address">123 Business Road, City, Pakistan<br/>Phone: 0300 1234567</div><div className="template-rule"/>
+        <div className="template-bill-meta"><span>Bill No: 000{index+1}</span><span>Date: 16 Oct 2026</span></div>
+        <table><thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody><tr><td>Rice 5kg</td><td>2</td><td>{currency} 1,200</td><td>{currency} 2,400</td></tr><tr><td>Cooking Oil</td><td>1</td><td>{currency} 550</td><td>{currency} 550</td></tr><tr><td>Sugar 1kg</td><td>3</td><td>{currency} 180</td><td>{currency} 540</td></tr></tbody></table>
+        <div className="template-total"><span>Total</span><strong>{currency} 3,490</strong></div><div className="template-footer">Thank you for your purchase!</div>
+      </div><h3>{t.name}</h3><p>{t.description}</p><button className={selected===t.id?'btn primary':'btn secondary'} onClick={()=>onSelect(t.id)}>{selected===t.id?'✓ Selected Template':'Select Template'}</button>
+    </article>)}</div>
+  </section>;
+}
+
+function Billing({ currency = 'PKR', businessName = '', template = 'classic' }) {
   const [products, setProducts] = useState([]);
   const [businessInfo, setBusinessInfo] = useState({});
   const [bills, setBills] = useState([]);
@@ -285,7 +304,8 @@ function Billing({ currency = 'PKR', businessName = '' }) {
   const lineAmount = item => moneyRound(lineGrossAmount(item)-lineDiscountAmount(item));
   const buildReceipt = sale => {
     const esc = value => String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{font:12px Arial,sans-serif;color:#111;width:100%;margin:0}h1{font-size:18px;text-align:center;margin:0 0 5px;overflow-wrap:anywhere}p{margin:4px 0}hr{border:0;border-top:1px dashed #777;margin:9px 0}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px 1px;border-bottom:1px dotted #bbb;vertical-align:top;font-size:11px}th:last-child,td:last-child{text-align:right}.total{font-size:16px;font-weight:bold;text-align:right;margin-top:10px}.center{text-align:center}.small{font-size:10px}</style></head><body><h1>${esc(businessInfo.business_name||businessName||'Shop')}</h1><p class="center">${esc(businessInfo.address||'')}</p><p class="center">${esc(businessInfo.phone||'')}</p><p class="center">${esc(businessInfo.email||'')}</p><p class="center">${esc(businessInfo.tax_number||'')}</p><p class="center">Bill: ${esc(sale.saleNumber)}</p><p>Date: ${esc(sale.saleDate||billDate)}</p><hr><table><thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Discount</th><th>Amount</th></tr></thead><tbody>${sale.items.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.quantity)}</td><td>${esc(money(x.unitPrice))}</td><td>${esc(money(x.discountPercent??0))}%<br><span class="small">${esc(currency)} ${esc(money(x.discount||0))}</span></td><td>${esc(money(x.lineTotal??(Number(x.quantity)*Number(x.unitPrice)-Number(x.discount||0))))}</td></tr>`).join('')}</tbody></table><hr><p>Subtotal: ${esc(currency)} ${esc(money(sale.subtotal??sale.items.reduce((sum,x)=>sum+Number(x.quantity)*Number(x.unitPrice),0)))}</p><p>Product discounts: -${esc(currency)} ${esc(money(sale.itemDiscountTotal??sale.items.reduce((sum,x)=>sum+Number(x.discount||0),0)))}</p><p>Overall discount (${esc(money(sale.overallDiscountPercent??0))}%): -${esc(currency)} ${esc(money(sale.overallDiscount||0))}</p><div class="total">Total: ${esc(currency)} ${esc(money(sale.total))}</div><hr><p class="center small">${esc(businessInfo.receipt_footer||'Thank you for shopping with us.')}</p></body></html>`;
+    const theme = template==='blue' ? 'blue' : template==='black' ? 'black' : 'classic';
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{font:12px Arial,sans-serif;color:#111;width:100%;margin:0}h1{font-size:18px;text-align:center;margin:0 0 5px;overflow-wrap:anywhere}p{margin:4px 0}hr{border:0;border-top:1px dashed #777;margin:9px 0}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px 1px;border-bottom:1px dotted #bbb;vertical-align:top;font-size:11px}th:last-child,td:last-child{text-align:right}.total{font-size:16px;font-weight:bold;text-align:right;margin-top:10px}.center{text-align:center}.small{font-size:10px}.brand{padding:8px 4px}.theme-blue .brand{background:#14549a;color:white}.theme-black .total{background:#17191c;color:white;padding:8px}.theme-blue .total{background:#14549a;color:white;padding:8px}.theme-blue th{color:#14549a}.theme-black th{border-bottom:2px solid #222}</style></head><body class="theme-${theme}"><div class="brand"><h1>${esc(businessInfo.business_name||businessName||'Shop')}</h1></div><p class="center">${esc(businessInfo.address||'')}</p><p class="center">${esc(businessInfo.phone||'')}</p><p class="center">${esc(businessInfo.email||'')}</p><p class="center">${esc(businessInfo.tax_number||'')}</p><p class="center">Bill: ${esc(sale.saleNumber)}</p><p>Date: ${esc(sale.saleDate||billDate)}</p><hr><table><thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Discount</th><th>Amount</th></tr></thead><tbody>${sale.items.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.quantity)}</td><td>${esc(money(x.unitPrice))}</td><td>${esc(money(x.discountPercent??0))}%<br><span class="small">${esc(currency)} ${esc(money(x.discount||0))}</span></td><td>${esc(money(x.lineTotal??(Number(x.quantity)*Number(x.unitPrice)-Number(x.discount||0))))}</td></tr>`).join('')}</tbody></table><hr><p>Subtotal: ${esc(currency)} ${esc(money(sale.subtotal??sale.items.reduce((sum,x)=>sum+Number(x.quantity)*Number(x.unitPrice),0)))}</p><p>Product discounts: -${esc(currency)} ${esc(money(sale.itemDiscountTotal??sale.items.reduce((sum,x)=>sum+Number(x.discount||0),0)))}</p><p>Overall discount (${esc(money(sale.overallDiscountPercent??0))}%): -${esc(currency)} ${esc(money(sale.overallDiscount||0))}</p><div class="total">Total: ${esc(currency)} ${esc(money(sale.total))}</div><hr><p class="center small">${esc(businessInfo.receipt_footer||'Thank you for shopping with us.')}</p></body></html>`;
   };
   const saveBill = async event => {
     event.preventDefault(); setError(''); setMessage('');
@@ -937,6 +957,8 @@ function Stock({ currency = 'PKR' }) {
 
 function Dashboard({ username, businessName, onLogout }) {
   const [active, setActive] = useState('Overview');
+  const [selectedBillingTemplate, setSelectedBillingTemplate] = useState(() => { try { return localStorage.getItem('stockdesk-billing-template') || 'classic'; } catch { return 'classic'; } });
+  const chooseBillingTemplate = id => { setSelectedBillingTemplate(id); try { localStorage.setItem('stockdesk-billing-template', id); } catch {} };
   const [displayBusinessName, setDisplayBusinessName] = useState(businessName || '');
   const [summary, setSummary] = useState({
     currency: 'PKR',
@@ -987,7 +1009,7 @@ function Dashboard({ username, businessName, onLogout }) {
     </aside>
     <main className="dash-main">
       <header className="dash-header"><div><div className="eyebrow">{active === 'Overview' ? 'LIVE LOCAL DATA' : 'MODULE'}</div><h1>{active === 'Overview' ? 'Good morning, Admin' : active}</h1><p>{active === 'Overview' ? (displayBusinessName || 'Your business') + ' · Dashboard refreshes every 10 seconds' : 'This section is prepared for the next development phase.'}</p></div><div className="user-pill"><span className="avatar">{username?.[0]?.toUpperCase() || 'A'}</span><div><b>{username || 'Admin'}</b><small>Administrator</small></div></div></header>
-      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Billing' ? <Billing currency={currency} businessName={displayBusinessName} /> : active === 'Profit & Loss' ? <ProfitLoss currency={currency} /> : active === 'Staff' ? <Staff currency={currency} /> : active === 'Dashboard Analytics' ? <DashboardAnalytics currency={currency} /> : active === 'Reports' ? <Reports currency={currency} /> : active === 'Settings' ? <Settings username={username} onSaved={business => { setDisplayBusinessName(business.business_name || ''); setSummary(current => ({ ...current, currency: business.currency || 'PKR' })); }} /> : active === 'Overview' ? <>
+      {active === 'Products' ? <Products currency={currency} /> : active === 'Stock' ? <Stock currency={currency} /> : active === 'Purchases' ? <Purchases currency={currency} /> : active === 'Sales' ? <Sales currency={currency} /> : active === 'Billing' ? <Billing currency={currency} businessName={displayBusinessName} template={selectedBillingTemplate} /> : active === 'Billing Templates' ? <BillingTemplates selected={selectedBillingTemplate} onSelect={chooseBillingTemplate} currency={currency} /> : active === 'Profit & Loss' ? <ProfitLoss currency={currency} /> : active === 'Staff' ? <Staff currency={currency} /> : active === 'Dashboard Analytics' ? <DashboardAnalytics currency={currency} /> : active === 'Reports' ? <Reports currency={currency} /> : active === 'Settings' ? <Settings username={username} onSaved={business => { setDisplayBusinessName(business.business_name || ''); setSummary(current => ({ ...current, currency: business.currency || 'PKR' })); }} /> : active === 'Overview' ? <>
         {summaryError && <div className="form-error">{summaryError}</div>}
         <section className="stat-grid">
           <Stat label="Total Products" value={money(summary.totalProducts)} note="Saved in your local database" icon="▦"/>
