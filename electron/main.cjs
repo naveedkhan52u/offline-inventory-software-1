@@ -121,7 +121,8 @@ function createDatabase() {
       unit_price REAL NOT NULL,
       unit_cost REAL NOT NULL DEFAULT 0,
       line_total REAL NOT NULL,
-      line_profit REAL NOT NULL DEFAULT 0
+      line_profit REAL NOT NULL DEFAULT 0,
+      discount REAL NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date DESC);
     CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id);
@@ -152,6 +153,11 @@ function createDatabase() {
   `);
 
   // Add business profile fields without deleting existing local business data.
+  const salesColumns = db.prepare('PRAGMA table_info(sales)').all().map(column => column.name);
+  if (!salesColumns.includes('bill_discount')) db.exec('ALTER TABLE sales ADD COLUMN bill_discount REAL NOT NULL DEFAULT 0');
+  const saleItemColumns = db.prepare('PRAGMA table_info(sale_items)').all().map(column => column.name);
+  if (!saleItemColumns.includes('discount')) db.exec('ALTER TABLE sale_items ADD COLUMN discount REAL NOT NULL DEFAULT 0');
+
   const businessColumns = db.prepare('PRAGMA table_info(business)').all().map(column => column.name);
   if (!businessColumns.includes('email')) db.exec("ALTER TABLE business ADD COLUMN email TEXT NOT NULL DEFAULT ''");
   if (!businessColumns.includes('tax_number')) db.exec("ALTER TABLE business ADD COLUMN tax_number TEXT NOT NULL DEFAULT ''");
@@ -551,7 +557,7 @@ app.whenReady().then(() => {
       }
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       const sales = db.prepare(`SELECT * FROM sales ${where} ORDER BY date(sale_date) DESC, id DESC LIMIT 1000`).all(...params);
-      const itemQuery = db.prepare('SELECT id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit FROM sale_items WHERE sale_id = ? ORDER BY id');
+      const itemQuery = db.prepare('SELECT id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit, discount FROM sale_items WHERE sale_id = ? ORDER BY id');
       return { ok: true, sales: sales.map(sale => ({ ...sale, items: itemQuery.all(sale.id) })) };
     } catch (error) {
       return { ok: false, error: 'Unable to load sales records.' };
@@ -583,7 +589,10 @@ app.whenReady().then(() => {
           if (!product) throw new Error('One of the selected products no longer exists.');
           const unitPrice = item.unitPrice === undefined || item.unitPrice === null || item.unitPrice === '' ? Number(product.selling_price || 0) : Number(item.unitPrice);
           if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Selling prices must be valid non-negative numbers.');
-          return { product, productId, quantity, unitPrice, unitCost: Number(product.buying_price || 0), lineTotal: Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100 };
+          const itemDiscount = item.discount === undefined || item.discount === null || item.discount === '' ? 0 : Number(item.discount);
+          const grossLineTotal = Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100;
+          if (!Number.isFinite(itemDiscount) || itemDiscount < 0 || itemDiscount > grossLineTotal) throw new Error('Each product discount must be zero or less than or equal to its line amount.');
+          return { product, productId, quantity, unitPrice, itemDiscount, unitCost: Number(product.buying_price || 0), grossLineTotal, lineTotal: Math.round((grossLineTotal - itemDiscount + Number.EPSILON) * 100) / 100 };
         });
         const quantities = new Map();
         for (const item of preparedItems) quantities.set(item.productId, (quantities.get(item.productId) || 0) + item.quantity);
@@ -591,20 +600,22 @@ app.whenReady().then(() => {
           const product = preparedItems.find(item => item.productId === productId).product;
           if (Number(product.stock_quantity || 0) < quantity) throw new Error('Not enough stock for ' + product.name + '. Available: ' + Number(product.stock_quantity || 0) + ', requested: ' + quantity + '.');
         }
-        const subtotal = Math.round((preparedItems.reduce((sum, item) => sum + item.lineTotal, 0) + Number.EPSILON) * 100) / 100;
-        if (discount > subtotal) throw new Error('Discount cannot exceed the sale subtotal.');
-        const total = Math.round((subtotal - discount + Number.EPSILON) * 100) / 100;
+        const subtotal = Math.round((preparedItems.reduce((sum, item) => sum + item.grossLineTotal, 0) + Number.EPSILON) * 100) / 100;
+        const itemDiscountTotal = Math.round((preparedItems.reduce((sum, item) => sum + item.itemDiscount, 0) + Number.EPSILON) * 100) / 100;
+        if (discount + itemDiscountTotal > subtotal) throw new Error('Total discounts cannot exceed the sale subtotal.');
+        const totalDiscount = Math.round((discount + itemDiscountTotal + Number.EPSILON) * 100) / 100;
+        const total = Math.round((subtotal - totalDiscount + Number.EPSILON) * 100) / 100;
         if (paidAmount > total + 0.005) throw new Error('Paid amount cannot exceed the final sale total.');
         const paymentStatus = paidAmount <= 0 ? 'Unpaid' : paidAmount + 0.005 >= total ? 'Paid' : 'Partial';
         const saleNumber = 'SAL-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14) + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
-        const sale = db.prepare('INSERT INTO sales (sale_number, customer_name, customer_phone, sale_date, subtotal, discount, total, paid_amount, payment_method, payment_status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(saleNumber, customerName, customerPhone, saleDate, subtotal, discount, total, paidAmount, paymentMethod, paymentStatus, notes);
-        const insertItem = db.prepare('INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        const sale = db.prepare('INSERT INTO sales (sale_number, customer_name, customer_phone, sale_date, subtotal, discount, total, paid_amount, payment_method, payment_status, notes, bill_discount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(saleNumber, customerName, customerPhone, saleDate, subtotal, totalDiscount, total, paidAmount, paymentMethod, paymentStatus, notes, discount);
+        const insertItem = db.prepare('INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, unit_cost, line_total, line_profit, discount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         const updateProduct = db.prepare('UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
         const insertMovement = db.prepare("INSERT INTO stock_movements (product_id, product_name, movement_type, quantity_change, previous_quantity, new_quantity, reason, notes) VALUES (?, ?, 'removal', ?, ?, ?, 'Sale / issued', ?)");
         for (const item of preparedItems) {
-          const lineProfit = Math.round((item.quantity * (item.unitPrice - item.unitCost) + Number.EPSILON) * 100) / 100;
-          insertItem.run(sale.lastInsertRowid, item.productId, item.product.name, item.quantity, item.unitPrice, item.unitCost, item.lineTotal, lineProfit);
+          const lineProfit = Math.round((item.lineTotal - item.quantity * item.unitCost + Number.EPSILON) * 100) / 100;
+          insertItem.run(sale.lastInsertRowid, item.productId, item.product.name, item.quantity, item.unitPrice, item.unitCost, item.lineTotal, lineProfit, item.itemDiscount);
         }
         for (const [productId, quantity] of quantities) {
           const product = preparedItems.find(item => item.productId === productId).product;
@@ -613,7 +624,7 @@ app.whenReady().then(() => {
           updateProduct.run(quantity, productId);
           insertMovement.run(productId, product.name, -quantity, previous, next, saleNumber + (customerName ? ' · ' + customerName : ''));
         }
-        return { id: sale.lastInsertRowid, saleNumber, subtotal, discount, total, paidAmount, paymentStatus };
+        return { id: sale.lastInsertRowid, saleNumber, subtotal, discount: totalDiscount, billDiscount: discount, itemDiscountTotal, total, paidAmount, paymentStatus };
       });
       return { ok: true, ...createSale() };
     } catch (error) {
