@@ -604,7 +604,19 @@ app.whenReady().then(() => {
         const itemDiscountTotal = Math.round((preparedItems.reduce((sum, item) => sum + item.itemDiscount, 0) + Number.EPSILON) * 100) / 100;
         if (discount + itemDiscountTotal > subtotal) throw new Error('Total discounts cannot exceed the sale subtotal.');
         const totalDiscount = Math.round((discount + itemDiscountTotal + Number.EPSILON) * 100) / 100;
-        const total = Math.round((subtotal - totalDiscount + Number.EPSILON) * 100) / 100;
+        const netBeforeOverall = Math.round((subtotal - itemDiscountTotal + Number.EPSILON) * 100) / 100;
+        if (discount > netBeforeOverall) throw new Error('Overall discount cannot exceed the amount remaining after product discounts.');
+        let allocatedOverall = 0;
+        preparedItems.forEach((item, index) => {
+          const netLine = Math.round((item.grossLineTotal - item.itemDiscount + Number.EPSILON) * 100) / 100;
+          const share = index === preparedItems.length - 1
+            ? Math.round((discount - allocatedOverall + Number.EPSILON) * 100) / 100
+            : netBeforeOverall > 0 ? Math.round((discount * netLine / netBeforeOverall + Number.EPSILON) * 100) / 100 : 0;
+          item.overallDiscountShare = share;
+          item.lineTotal = Math.round((netLine - share + Number.EPSILON) * 100) / 100;
+          allocatedOverall = Math.round((allocatedOverall + share + Number.EPSILON) * 100) / 100;
+        });
+        const total = Math.round((preparedItems.reduce((sum, item) => sum + item.lineTotal, 0) + Number.EPSILON) * 100) / 100;
         if (paidAmount > total + 0.005) throw new Error('Paid amount cannot exceed the final sale total.');
         const paymentStatus = paidAmount <= 0 ? 'Unpaid' : paidAmount + 0.005 >= total ? 'Paid' : 'Partial';
         const saleNumber = 'SAL-' + new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14) + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
