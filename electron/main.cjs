@@ -315,10 +315,25 @@ app.whenReady().then(() => {
       if (!ownerName) return { ok: false, error: 'Owner name is required.' };
       if (!['PKR', 'USD', 'EUR', 'GBP'].includes(currency)) return { ok: false, error: 'Select a supported business currency.' };
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Enter a valid email address.' };
-      db.prepare(`UPDATE business SET business_name=?, owner_name=?, phone=?, address=?, currency=?, email=?, tax_number=?, receipt_footer=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`).run(businessName, ownerName, phone, address, currency, email, taxNumber, receiptFooter || 'Thank you for shopping with us.');
-      return { ok: true, business: { business_name: businessName, owner_name: ownerName, phone, address, currency, email, tax_number: taxNumber, receipt_footer: receiptFooter || 'Thank you for shopping with us.' } };
+      const savedFooter = receiptFooter || 'Thank you for shopping with us.';
+      db.prepare(`
+        INSERT INTO business (id, business_name, owner_name, phone, address, currency, email, tax_number, receipt_footer, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+          business_name=excluded.business_name,
+          owner_name=excluded.owner_name,
+          phone=excluded.phone,
+          address=excluded.address,
+          currency=excluded.currency,
+          email=excluded.email,
+          tax_number=excluded.tax_number,
+          receipt_footer=excluded.receipt_footer,
+          updated_at=CURRENT_TIMESTAMP
+      `).run(businessName, ownerName, phone, address, currency, email, taxNumber, savedFooter);
+      return { ok: true, business: { business_name: businessName, owner_name: ownerName, phone, address, currency, email, tax_number: taxNumber, receipt_footer: savedFooter } };
     } catch (error) {
-      return { ok: false, error: 'Unable to save business settings.' };
+      console.error('Failed to save StockDesk business settings:', error);
+      return { ok: false, error: `Unable to save business settings: ${error.message || 'Unknown database error'}` };
     }
   });
 
