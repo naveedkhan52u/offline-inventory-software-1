@@ -64,8 +64,8 @@
 .billing-footer{align-items:center;justify-content:space-between;gap:20px;background:#f8fafc;border:1px solid #e3e9ef;border-radius:12px;padding:20px 22px;margin-top:24px}
 .billing-total{text-align:left;flex:1}
 .billing-total span{font-size:14px;font-weight:700;color:#536474;letter-spacing:.02em;margin-bottom:6px}
-.billing-total strong{font-family:Manrope,sans-serif;font-size:26px;line-height:1.15;font-weight:800;color:#fff;background:#273b4d;display:inline-flex;align-items:center;padding:10px 14px;border-radius:9px;margin-top:2px;letter-spacing:-.025em}
+.billing-total strong{font-family:Manrope,sans-serif;font-size:21px;line-height:1.15;font-weight:800;color:#fff;background:#273b4d;display:inline-flex;align-items:center;padding:6px 10px;border-radius:7px;margin-top:2px;letter-spacing:-.025em}
 .billing-save-button,.billing-save-button.btn,.billing-save-button.btn.primary{background:#fff!important;background-color:#fff!important;color:#171717!important;border:1px solid #cbd4dc!important;box-shadow:0 2px 5px #172b3a0b!important;font-size:13px;font-weight:750;padding:0 22px;min-height:48px;border-radius:9px}
 .billing-save-button:hover:not(:disabled){background:#f4f7f9!important;color:#111!important;border-color:#aebbc7!important}
 .billing-save-button:disabled{background:#fff!important;color:#777!important;opacity:.7}
-@media(max-width:700px){.billing-footer{align-items:stretch;padding:16px}.billing-total strong{font-size:24px}.billing-save-button,.billing-save-button.btn,.billing-save-button.btn.primary{width:100%}}
+@media(max-width:700px){.billing-footer{align-items:stretch;padding:16px}.billing-total strong{font-size:20px;padding:6px 9px}.billing-save-button,.billing-save-button.btn,.billing-save-button.btn.primary{width:100%}}
