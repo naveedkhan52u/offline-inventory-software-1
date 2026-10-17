@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('inventoryAPI', {
   authStatus: () => ipcRenderer.invoke('auth:status'),
   createAccount: (data) => ipcRenderer.invoke('auth:create', data),
   login: (data) => ipcRenderer.invoke('auth:login', data),
+  getBusinessSettings: () => ipcRenderer.invoke('settings:get-business'),
+  saveBusinessSettings: (data) => ipcRenderer.invoke('settings:save-business', data),
   getDashboardSummary: () => ipcRenderer.invoke('dashboard:summary'),
   getAnalyticsOverview: (options) => ipcRenderer.invoke('analytics:overview', options),
   generateReports: (filters) => ipcRenderer.invoke('reports:generate', filters),
